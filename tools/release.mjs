@@ -127,7 +127,11 @@ run('npx', ebArgs, {
 // ── 4. Verificar contra dist/ ─────────────────────────────────────────────
 paso('Verificación');
 const dist = path.join(ROOT, pkg.build.directories?.output || 'dist');
-const instalador = pkg.build.nsis.artifactName.replace('${version}', version).replace('${ext}', 'exe');
+// Mnemus no usa ${productName} en el artifactName; Idiolect sí, y sin
+// reemplazarlo el script buscaba un «${productName}-Setup-…» que no existe.
+const instalador = pkg.build.nsis.artifactName
+  .replace('${productName}', pkg.build.productName || pkg.productName)
+  .replace('${version}', version).replace('${ext}', 'exe');
 const esperados = [instalador, `${instalador}.blockmap`, 'latest.yml'].map((name) => {
   const f = path.join(dist, name);
   if (!fs.existsSync(f)) falla(`falta ${name} en dist/.`);
