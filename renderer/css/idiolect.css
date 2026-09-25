@@ -1,0 +1,78 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   IDIOLECT — componentes propios
+   Prefijo `id-` para lo que es de esta app; todo lo demás es Onyx (`ox-`).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* El editor necesita más aire que el inspector de fábrica: hay textareas. */
+.ox-app { --ox-inspector: 340px; }
+
+.id-search { width: 240px; }
+
+/* ── Filtro por etiqueta ─────────────────────────────────────────────────── */
+.id-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: var(--ox-3) 0 var(--ox-2);
+}
+.id-filtros.is-empty { display: none; }
+
+.id-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 var(--ox-3);
+  border: 0;
+  border-radius: var(--ox-r-pill);
+  background: var(--ox-wash-1);
+  color: var(--ox-text-3);
+  font: inherit;
+  font-size: var(--ox-fs-12);
+  cursor: pointer;
+  transition: var(--tr-color);
+}
+.id-tag:hover { background: var(--ox-wash-2); color: var(--ox-text-2); }
+.id-tag.is-on { background: var(--ox-wash-3); color: var(--ox-text); }
+.id-tag:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ox-ring); }
+.id-tag__n { color: var(--ox-text-4); font-size: var(--ox-fs-11); transition: var(--tr-color); }
+.id-tag.is-on .id-tag__n { color: var(--ox-text-3); }
+
+.id-nada { padding: var(--ox-6) 0; }
+
+/* ── Editor ──────────────────────────────────────────────────────────────── */
+.id-editor__vacio {
+  flex: 1 1 auto;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--ox-3);
+  padding: var(--ox-6);
+  text-align: center;
+  color: var(--ox-text-4);
+}
+.id-editor__titulo { font-size: var(--ox-fs-15); font-weight: var(--ox-w-medium); }
+
+.id-editor .ox-inspector__body { display: flex; flex-direction: column; gap: var(--ox-4); }
+.id-editor .ox-textarea { resize: vertical; min-height: 0; }
+.id-confirmar { gap: 12px; align-items: flex-start; padding-bottom: var(--ox-1); }
+.id-confirmar .ox-switch { margin-top: 1px; flex: 0 0 auto; }
+
+/* ── Ajustes ─────────────────────────────────────────────────────────────── */
+.id-parrafo { line-height: 1.65; margin: 0; }
+
+.id-codigo {
+  padding: 10px 12px;
+  border-radius: var(--ox-r-sm);
+  background: var(--ox-sunken);
+  box-shadow: var(--ox-hairline);
+  font-size: var(--ox-fs-12);
+  color: var(--ox-text-2);
+  overflow-wrap: anywhere;
+}
+
+/* ── Versión en la statusbar: es el botón del actualizador ───────────────── */
+.id-version { cursor: pointer; transition: color var(--ox-t-1) var(--ox-ease-soft); }
+.id-version:hover { color: var(--ox-text); }
+.id-version:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ox-ring); border-radius: var(--ox-r-xs); }
+.id-version.is-pending .ox-statusbar__value { color: var(--ox-text); }

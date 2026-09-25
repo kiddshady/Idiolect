@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+
+# Los datos son del usuario, no del repo. Si querés versionar un set de
+# ejemplo, movelo a seed/ y copialo en el primer arranque.
+data/
+*.tmp
+*.corrupto-*
+
+# Script de la plantilla Onyx que vino con la copia; no es parte de la app.
+scaffold.ps1
