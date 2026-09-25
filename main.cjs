@@ -52,6 +52,23 @@ const MIN_H = 600;
 /** @type {BrowserWindow | null} */
 let win = null;
 
+/* ── Instancia única ─────────────────────────────────────────────────────────
+   Dos ventanas editando el mismo glosario se pisarían: cada una tiene su copia
+   en memoria y la última en guardar gana. La segunda en abrir se va sin llegar
+   a crear nada y le pasa la posta a la primera, que se trae al frente. */
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+function traerAlFrente() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+app.on('second-instance', traerAlFrente);
+
 /* ── Estado de la ventana ────────────────────────────────────────────────────
    Recordar tamaño y posición entre sesiones. La trampa: si el monitor donde
    estaba ya no existe, la posición guardada deja la ventana en la nada. Por
@@ -179,6 +196,9 @@ ipcMain.on('win:set-bg', (_e, hex) => {
 });
 
 app.whenReady().then(async () => {
+  // app.quit() de arriba no corta en seco: sin esta guarda, la segunda
+  // instancia llegaba a registrar el IPC y el vigía antes de irse.
+  if (!app.hasSingleInstanceLock()) return;
   ipc.register();
   createWindow(await loadWindowState());
 
