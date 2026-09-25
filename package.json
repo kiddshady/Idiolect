@@ -1,7 +1,7 @@
 {
   "name": "idiolect",
   "productName": "Idiolect",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Glosario de las expresiones de Fran, exportado como glosario.md para Claude Code.",
   "main": "main.cjs",
   "author": "Kidd Shady · Umbrovex Systems <umbrovex@proton.me>",
