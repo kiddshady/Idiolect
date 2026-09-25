@@ -23,9 +23,11 @@ Uso: node tools/anotar.cjs [opciones]
   --notas "…"        Cuándo la usa, con qué tono, contra qué no confundirla.
   --etiquetas a,b    Separadas por coma.
   --confirmada       La dijo o la validó Fran. Sin esto queda como borrador de Claude.
+  --forzar           Pisar una entrada que Fran ya confirmó (solo con su visto bueno).
 
   Si la expresión ya existe (sin mirar tildes ni mayúsculas), se actualizan solo
-  los campos que pases.
+  los campos que pases. Si ya existe y está confirmada, sin --confirmada ni
+  --forzar no se toca: se muestra lo que hay.
 
   --listar           Muestra todas las entradas.
   --borrar "…"       Elimina la entrada con esa expresión.
@@ -83,6 +85,15 @@ async function main() {
     const previa = (await col.list()).find((e) => plegar(e.expresion) === clave);
     if (!previa && typeof args.significa !== 'string') {
       throw new Error('Una entrada nueva necesita --significa.');
+    }
+    /* Lo que Fran confirmó no se pisa con una propuesta. Pasó el 25/09/2026:
+       Fran cargó «como el orto» en la app, Claude la anotó desde el chat un
+       minuto después creyendo que era nueva, y el texto de Fran se perdió.
+       Sin --confirmada (o sea, una propuesta de Claude) sobre una entrada
+       confirmada, se frena y se muestra lo que hay. */
+    if (previa?.confirmada && !args.confirmada && !args.forzar) {
+      throw new Error(`«${previa.expresion}» ya existe y está confirmada: ${previa.significa}\n`
+        + 'No se tocó. Para cambiarla igual (con el visto bueno de Fran): --confirmada o --forzar.');
     }
 
     const cambios = {};

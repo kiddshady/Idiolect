@@ -56,6 +56,10 @@ archivo = fs.readFileSync(path.join(DIR, 'glosario.md'), 'utf8');
 ok('la misma expresión con otra mayúscula actualiza, no duplica', todas.length === 1, String(todas.length));
 ok('actualizar conserva lo que no se pasó', archivo.includes('Saludo relajado.') && archivo.includes('Ej.: «holis CC».'));
 ok('--confirmada saca la marca', !archivo.includes('_sin confirmar_'));
+let frenada = false;
+try { cli('--expresion', 'holis', '--significa', 'Otra cosa.'); } catch { frenada = true; }
+archivo = fs.readFileSync(path.join(DIR, 'glosario.md'), 'utf8');
+ok('una propuesta no pisa una entrada confirmada', frenada && archivo.includes('Saludo relajado.') && !archivo.includes('Otra cosa.'));
 let fallo = false;
 try { cli('--expresion', 'nueva sin significado'); } catch { fallo = true; }
 ok('una entrada nueva sin --significa se rechaza', fallo);
