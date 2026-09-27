@@ -73,11 +73,6 @@
 /* Sin `from`: sale desde donde esté, aunque todavía no hubiera terminado de entrar. */
 @keyframes id-desvanecer { to { opacity: 0 } }
 
-/* La fila va de borde a borde de la columna, y la columna es un .ox-scroll
-   que recorta: el anillo de base.css (3.5px por fuera) se cortaba a la
-   izquierda. Va hacia adentro, como el de la .ox-tr de Onyx. */
-.id-row:focus-visible { box-shadow: inset 0 0 0 1.5px var(--ox-ring); }
-
 /* ── Editor ──────────────────────────────────────────────────────────────── */
 .id-editor__vacio {
   flex: 1 1 auto;
