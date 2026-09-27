@@ -153,6 +153,12 @@ banda no coma el primer ni el último ítem.
 
 `.ox-icon` con `--sm` / `--lg` / `--xl` / `--fill`.
 
+**Un ícono adentro de `.ox-meta` o `.ox-label` va en el renglón.** Los dos son
+texto en línea y todo `svg` es `display: block`, así que el ícono se iba solo a
+un renglón de arriba (salió de Pharos: «de la red», «Aplicar descuento» tenían
+el ícono flotando encima del texto). Con `:has(> .ox-icon)` pasan a
+`inline-flex` solo los que llevan ícono. El de humo lo mide (8-decies).
+
 ---
 
 ## Shell
@@ -189,6 +195,24 @@ banda no coma el primer ni el último ítem.
 
 La titlebar entera es zona de arrastre; lo que sea clickeable lleva
 `.ox-no-drag`. `#ox-layer` es donde se portalean todos los overlays.
+
+Los `.ox-wincontrol` se clickean en todo el alto de la titlebar (maximizada,
+la esquina acierta la cruz), pero se ven como una pastilla de 28 px adentro:
+hover, press y el anillo de foco no llegan al canto de la ventana, donde se
+cortaban. Si la titlebar tiene otras piezas al lado (pestañas, por ejemplo),
+`--ox-wincontrol-nudge` corre la pastilla en vertical para alinearla.
+
+### El anillo de foco no se corta
+
+El anillo de `base.css` sale **3.5px por fuera** del elemento. Todo lo que
+pueda recibir foco necesita ese aire hasta cualquier cosa que recorte (un
+`.ox-scroll`, el borde de la ventana) y hasta el canto de la superficie que lo
+contiene. Donde no lo hay, el anillo va **hacia adentro**: así lo llevan el
+`.ox-segmented__opt` (2px de carril) y la `.ox-tr` con tabindex (va de borde a
+borde, muchas veces de una card). El rail deja `--ox-2` arriba del nav por lo
+mismo, y de paso separa el botón principal de la navegación. `npm run smoke`
+lo mide en cada vista (9-bis): si sumás una pieza que pega su anillo contra un
+borde, falla ahí.
 
 ### Dentro de la vista
 
@@ -322,6 +346,9 @@ Dentro de un `.ox-scroll` se clava con `top: -var(--ox-fade)`: el sticky se
 engancha al borde del contenido, y sin eso quedaba debajo del padding del
 esfumado con las filas pasando por arriba. Mientras está clavado, el scroller
 lleva `.is-stuck-head` y no esfuma arriba: la hairline ya es el límite.
+
+Una `.ox-tr` que se abre con Enter lleva `tabindex="0"`, y su anillo de foco es
+un outline hacia adentro, pintado encima de las celdas.
 
 **`.ox-td--num` va también en el `<th>`, no solo en las celdas.** Si el
 encabezado no la lleva, el título se queda a la izquierda mientras los números

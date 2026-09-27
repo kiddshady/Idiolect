@@ -12,7 +12,7 @@
 import { Icons } from './icons.js';
 import { Tooltip, Toast, Modal } from './overlays.js';
 import Router from './router.js';
-import { initClickFlash, initScrollFades, raf2 } from './motion.js';
+import { initClickFlash, initScrollFades, raf2, exit, toggleReveal } from './motion.js';
 import { esc, paint, head, empty, mark, attempt, copy, colorToken, path } from './ui.js';
 import { relTime, plural, fmtBytes } from './format.js';
 
@@ -42,6 +42,99 @@ const plegar = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/
 const orden = (a, b) => a.expresion.localeCompare(b.expresion, 'es', { sensitivity: 'base' });
 const entrada = (id) => S.entradas.find((e) => e.id === id) || null;
 const pendientes = () => S.entradas.filter((e) => !e.confirmada);
+
+/* ══ Movimiento ══════════════════════════════════════════════════════════════
+   Nada cambia de un cuadro al otro: ni un panel, ni una fila, ni un texto.
+   Las duraciones y curvas salen de los tokens de Onyx, no de números sueltos. */
+
+const token = (k) => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const ms = (k) => parseFloat(token(k)) || 0;
+
+/** Retira algo que se reemplaza o sobra: sin ids ni data-entrada (que nadie
+    lo encuentre por error mientras se esfuma), inerte, y saliendo desde donde
+    esté aunque todavía no hubiera terminado de entrar. */
+function retirar(el, fallback = 260) {
+  if (!el || el.dataset.state === 'closing') return;
+  const cs = getComputedStyle(el);
+  el.style.opacity = cs.opacity;
+  if (el.classList.contains('is-entering') && el.classList.contains('id-fila')) {
+    // A medio abrir: el cierre arranca desde ese alto, no desde el alto entero.
+    const lleno = el.firstElementChild?.scrollHeight || 0;
+    if (lleno) el.style.gridTemplateRows = `${Math.min(1, el.offsetHeight / lleno)}fr`;
+  }
+  el.classList.remove('is-entering', 'is-after', 'is-settled');
+  el.inert = true;
+  el.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+  el.querySelectorAll('[data-entrada]').forEach((n) => n.removeAttribute('data-entrada'));
+  exit(el, { fallback });
+}
+
+/** Marca una entrada y la apaga al terminar, con una clase (no con
+    style.animation, que le ganaría a la regla de salida). */
+function entrar(el, { despues = false, fallback = 700 } = {}) {
+  el.classList.add('is-entering');
+  if (despues) el.classList.add('is-after');
+  const fin = () => { el.classList.remove('is-entering', 'is-after'); clearTimeout(red); };
+  const red = setTimeout(fin, fallback);
+  el.addEventListener('animationend', (ev) => { if (ev.target === el) fin(); }, { once: true });
+}
+
+/** Cambia un texto con un fundido corto: baja, cambia y vuelve. Si llega otro
+    cambio mientras baja, se queda con el último; si llega mientras vuelve,
+    baja desde donde está. Sin cambio, no hace nada. */
+const fundidos = new WeakMap();
+function cambiarTexto(el, texto) {
+  if (!el) return;
+  texto = String(texto);
+  const f = fundidos.get(el);
+  if (f?.bajando) { f.texto = texto; return; }
+  if (el.textContent === texto) return;
+  const desde = getComputedStyle(el).opacity;
+  f?.sube?.cancel();
+  const estado = { texto, bajando: true };
+  fundidos.set(el, estado);
+  const baja = el.animate([{ opacity: desde }, { opacity: 0 }],
+    { duration: ms('--ox-t-1'), easing: token('--ox-ease-in'), fill: 'forwards' });
+  baja.onfinish = () => {
+    el.textContent = estado.texto;
+    estado.bajando = false;
+    estado.sube = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: ms('--ox-t-2'), easing: token('--ox-ease') });
+    baja.cancel();
+  };
+}
+
+/**
+ * Pone los hijos de `cont` en el orden de `items`, reusando los que ya
+ * estaban (por clave): los nuevos entran, los que sobran se retiran, y los
+ * que siguen no se tocan: ni se repintan ni pierden el foco.
+ */
+function reconciliar(cont, items, { clave, crear, actualizar, animar }) {
+  const vivos = new Map();
+  for (const n of cont.children) if (n.dataset.state !== 'closing') vivos.set(n.dataset.clave, n);
+  const siguienteVivo = (n) => {
+    let s = n.nextElementSibling;
+    while (s && s.dataset.state === 'closing') s = s.nextElementSibling;
+    return s;
+  };
+  let ancla = null;   // de abajo hacia arriba: cada uno va antes del siguiente
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    const k = clave(it);
+    let n = vivos.get(k);
+    if (n) { vivos.delete(k); actualizar?.(n, it); }
+    else {
+      n = crear(it);
+      n.dataset.clave = k;
+      if (animar) entrar(n);
+    }
+    if (!n.isConnected || siguienteVivo(n) !== ancla) cont.insertBefore(n, ancla);
+    ancla = n;
+  }
+  for (const n of vivos.values()) {
+    if (animar) retirar(n);
+    else n.remove();
+  }
+}
 
 async function cargar() {
   S.entradas = (await entradas.list()).sort(orden);
@@ -145,8 +238,8 @@ function viewGlosario() {
   }) + `
     <div class="ox-viewbody">
       <div class="ox-viewbody__main">
-        <div class="id-filtros" id="filtros"></div>
-        <div class="ox-scroll ox-grow" id="lista-scroll"><div id="lista"></div></div>
+        <div class="ox-reveal" id="filtros-wrap"><div><div class="id-filtros" id="filtros"></div></div></div>
+        <div class="ox-scroll ox-grow" id="lista-scroll"><div class="id-lista" id="lista"><div class="ox-list"></div></div></div>
       </div>
       <aside class="ox-inspector id-editor" id="editor"></aside>
     </div>`);
@@ -190,34 +283,87 @@ function renderFiltros() {
   for (const e of S.entradas) for (const t of e.etiquetas || []) conteo.set(t, (conteo.get(t) || 0) + 1);
   if (S.tag && !conteo.has(S.tag)) S.tag = null;
   const tags = [...conteo.keys()].sort((a, b) => a.localeCompare(b, 'es'));
-  host.innerHTML = tags.map((t) => `
-    <button class="id-tag${S.tag === t ? ' is-on' : ''}" data-tag="${esc(t)}">
-      ${esc(t)}<span class="id-tag__n ox-num">${conteo.get(t)}</span>
-    </button>`).join('');
-  host.classList.toggle('is-empty', !tags.length);
+  const primera = !host.dataset.pintada;
+  host.dataset.pintada = '1';
+
+  reconciliar(host, tags, {
+    clave: (t) => t,
+    animar: !primera,
+    crear: (t) => {
+      const b = document.createElement('button');
+      b.className = 'id-tag';
+      b.dataset.tag = t;
+      b.innerHTML = `${esc(t)}<span class="id-tag__n ox-num">${conteo.get(t)}</span>`;
+      return b;
+    },
+    actualizar: (b, t) => cambiarTexto(b.querySelector('.id-tag__n'), conteo.get(t)),
+  });
+  host.querySelectorAll('.id-tag').forEach((b) => b.classList.toggle('is-on', b.dataset.tag === S.tag));
+
+  // La fila de etiquetas se abre y se cierra de a poco. Al pintar la vista ya
+  // nace en su alto: si no, se abriría con la vista ya en pantalla.
+  const wrap = document.getElementById('filtros-wrap');
+  if (primera) {
+    wrap.style.transition = 'none';
+    toggleReveal(wrap, tags.length > 0);
+    void wrap.offsetHeight;
+    wrap.style.transition = '';
+  } else {
+    toggleReveal(wrap, tags.length > 0);
+  }
 }
 
 function renderLista() {
   const host = document.getElementById('lista');
-  if (!host) return;
-  const lista = visibles();
+  const list = host?.querySelector(':scope > .ox-list');
+  if (!list) return;
+  const primera = !host.dataset.pintada;
+  host.dataset.pintada = '1';
+  const lista = S.entradas.length ? visibles() : [];
 
-  if (!S.entradas.length) {
-    host.innerHTML = empty({
+  reconciliar(list, lista, {
+    clave: (e) => e.id,
+    animar: !primera,
+    crear: (e) => {
+      const f = document.createElement('div');
+      f.className = 'id-fila';
+      pintarFila(f, e);
+      return f;
+    },
+    actualizar: pintarFila,
+  });
+  list.querySelectorAll('.id-row').forEach((r) => r.classList.toggle('is-selected', r.dataset.entrada === S.sel));
+
+  // El mensaje, si hace falta, releva a la lista en su misma celda.
+  const msg = !S.entradas.length ? 'vacio'
+    : !lista.length ? (S.q || S.tag ? 'filtro' : 'pendientes') : '';
+  const viejo = host.querySelector(':scope > .id-lista__msg:not([data-state="closing"])');
+  if ((viejo?.dataset.msg || '') === msg) return;
+  if (viejo) { if (primera) viejo.remove(); else retirar(viejo); }
+  if (!msg) return;
+  const nuevo = document.createElement('div');
+  nuevo.className = 'id-lista__msg';
+  nuevo.dataset.msg = msg;
+  nuevo.innerHTML = msg === 'vacio'
+    ? empty({
       icon: 'book',
       title: 'El glosario está vacío',
       text: 'Agregá una expresión con el botón del costado, o pedile a Claude que anote una desde el chat.',
-    });
-    return;
-  }
-  if (!lista.length) {
-    host.innerHTML = `<div class="id-nada ox-meta">${
-      S.q || S.tag ? 'Ninguna expresión coincide con el filtro.' : 'No hay borradores pendientes.'}</div>`;
-    return;
-  }
+    })
+    : `<div class="id-nada ox-meta">${msg === 'filtro' ? 'Ninguna expresión coincide con el filtro.' : 'No hay borradores pendientes.'}</div>`;
+  // Si hay algo yéndose (el mensaje de antes, filas que se cierran), el
+  // nuevo espera su turno; si no, aparece sin esperar.
+  if (primera) nuevo.classList.add('is-settled');
+  else if (viejo || list.querySelector(':scope > [data-state="closing"]')) nuevo.classList.add('is-after');
+  host.append(nuevo);
+  setTimeout(() => nuevo.classList.add('is-settled'), 700);
+}
 
-  host.innerHTML = `<div class="ox-list">${lista.map((e) => `
-    <div class="ox-listitem id-row${e.id === S.sel ? ' is-selected' : ''}" role="button" tabindex="0" data-entrada="${esc(e.id)}">
+/** El contenido de una fila. Solo se repinta si cambió: repintarla le haría
+    perder el foco a quien la está recorriendo con el teclado. */
+function pintarFila(f, e) {
+  const html = `
+    <div class="ox-listitem id-row" role="button" tabindex="0" data-entrada="${esc(e.id)}">
       ${mark(e.confirmada ? 'done' : 'waiting')}
       <div class="ox-listitem__main">
         <span class="ox-listitem__title">${esc(e.expresion)}</span>
@@ -226,7 +372,10 @@ function renderLista() {
       <div class="ox-listitem__aside">
         ${(e.etiquetas || []).slice(0, 2).map((t) => `<span class="ox-chip">${esc(t)}</span>`).join('')}
       </div>
-    </div>`).join('')}</div><div style="height:24px"></div>`;
+    </div>`;
+  if (f._html === html) return;
+  f._html = html;
+  f.innerHTML = html;
 }
 
 /* ── El editor ───────────────────────────────────────────────────────────────
@@ -246,23 +395,27 @@ const NOTA_CONFIRMADA = {
   false: 'Claude la lee con reserva hasta que la confirmes.',
 };
 
+/** El panel que se está mostrando (no el que se está yendo). */
+const panelVivo = () => document.querySelector('#editor > .id-editor__panel:not([data-state="closing"])');
+
 function renderEditor() {
   const host = document.getElementById('editor');
   if (!host) return;
   const e = entrada(S.sel);
+  const panel = document.createElement('div');
+  panel.className = 'id-editor__panel';
+  panel.dataset.clave = e?.id || '';
 
   if (!e) {
-    host.innerHTML = `<div class="id-editor__vacio">
+    panel.innerHTML = `<div class="id-editor__vacio">
       ${Icons.svg('edit', 'ox-icon--lg')}
       <span class="ox-meta">Elegí una expresión para verla y editarla.</span></div>`;
-    return;
-  }
-
-  const valor = (k) => (k === 'etiquetas' ? (e.etiquetas || []).join(', ') : e[k] || '');
-  host.innerHTML = `
+  } else {
+    const valor = (k) => (k === 'etiquetas' ? (e.etiquetas || []).join(', ') : e[k] || '');
+    panel.innerHTML = `
     <div class="ox-inspector__head">
       <div class="ox-grow" style="min-width:0">
-        <div class="ox-truncate id-editor__titulo">${esc(e.expresion)}</div>
+        <div class="ox-truncate id-editor__titulo" id="editor-titulo">${esc(e.expresion)}</div>
         <div class="ox-meta">${e.origen === 'claude' ? 'Borrador de Claude' : 'Tuya'} · ${esc(relTime(e.updatedAt))}</div>
       </div>
     </div>
@@ -287,20 +440,40 @@ function renderEditor() {
       <button class="ox-btn ox-btn--ghost ox-btn--sm ox-grow" id="copiar-linea"><i data-icon="copy"></i> Copiar como la lee Claude</button>
       <button class="ox-btn ox-btn--danger ox-btn--sm" id="borrar"><i data-icon="trash"></i> Eliminar</button>
     </div>`;
-  Icons.mount(host);
-  initScrollFades(host);
+  }
+
+  // La misma expresión (llegó un cambio de afuera) se repinta en el lugar y
+  // conserva el scroll. Otra expresión hace un relevo: la vieja se esfuma
+  // mientras la nueva asoma, en la misma celda. Al pintar la vista no hay
+  // relevo: la vista entera ya entra con su propia animación.
+  const actual = panelVivo();
+  if (actual && actual.dataset.clave === panel.dataset.clave) {
+    const scroll = actual.querySelector('.ox-inspector__body')?.scrollTop || 0;
+    actual.replaceWith(panel);
+    const body = panel.querySelector('.ox-inspector__body');
+    if (body) body.scrollTop = scroll;
+  } else if (actual) {
+    retirar(actual);
+    entrar(panel, { despues: true });
+    host.append(panel);
+  } else {
+    host.append(panel);
+  }
+  Icons.mount(panel);
+  initScrollFades(panel);
+  if (!e) return;
 
   // Los nodos mueren con el próximo renderEditor(): los listeners se van con ellos.
-  host.querySelectorAll('[data-campo]').forEach((el) => {
+  panel.querySelectorAll('[data-campo]').forEach((el) => {
     el.addEventListener('change', () => guardarCampo(e.id, el.dataset.campo, el));
   });
-  host.querySelector('#confirmada').addEventListener('click', (ev) => {
+  panel.querySelector('#confirmada').addEventListener('click', (ev) => {
     const on = !ev.currentTarget.classList.contains('is-on');
     ev.currentTarget.classList.toggle('is-on', on);
     guardarCampo(e.id, 'confirmada', null, on);
   });
-  host.querySelector('#copiar-linea').addEventListener('click', () => copy(lineaMd(entrada(e.id))));
-  host.querySelector('#borrar').addEventListener('click', () => borrar(e.id));
+  panel.querySelector('#copiar-linea').addEventListener('click', () => copy(lineaMd(entrada(e.id))));
+  panel.querySelector('#borrar').addEventListener('click', () => borrar(e.id));
 }
 
 /* Los guardados del editor van en fila. Salir de «Notas» con Tab y tocar
@@ -340,12 +513,12 @@ async function guardarCampoAhora(id, campo, el, valorDirecto) {
   // mostrando hasta que se elija otra: el click no hace desaparecer lo que se
   // está mirando.
   renderLista();
-  const titulo = document.querySelector('.id-editor__titulo');
-  if (titulo) titulo.textContent = saved.expresion;
-  const nota = document.getElementById('nota-confirmada');
-  if (nota) nota.textContent = NOTA_CONFIRMADA[Boolean(saved.confirmada)];
-  const sub = document.querySelector('.ox-viewhead__sub');
-  if (sub) sub.textContent = subtitulo();
+  cambiarTexto(document.querySelector('.ox-viewhead__sub'), subtitulo());
+  // Si mientras se guardaba ya se eligió otra expresión (salir de un campo
+  // con un clic en otra fila), el editor es de esa otra: no se le toca nada.
+  if (panelVivo()?.dataset.clave !== saved.id) return;
+  cambiarTexto(document.getElementById('editor-titulo'), saved.expresion);
+  cambiarTexto(document.getElementById('nota-confirmada'), NOTA_CONFIRMADA[Boolean(saved.confirmada)]);
 }
 
 /** La misma línea que escribe glosario.cjs, para pegarla en otro lado. */
@@ -453,7 +626,7 @@ function viewAjustes() {
     const r = await attempt(() => api.glosario.exportar(), { errorTitle: 'No se pudo regenerar' });
     if (!r) return;
     S.exportado = Date.now();
-    document.getElementById('aj-exportado').textContent = relTime(S.exportado);
+    cambiarTexto(document.getElementById('aj-exportado'), relTime(S.exportado));
     actualizarMarco();
     Toast.show({ title: 'glosario.md regenerado', text: plural(r.total, 'entrada', 'entradas'), icon: 'check' });
   });
@@ -523,10 +696,10 @@ function pintarVersion() {
   const val = chip?.querySelector('.ox-statusbar__value');
   if (!chip || !val) return;
   const v = upd?.actual || S.info?.version || '';
-  val.textContent = upd?.fase === 'listo' ? `${upd.version} lista para instalar`
+  cambiarTexto(val, upd?.fase === 'listo' ? `${upd.version} lista para instalar`
     : upd?.fase === 'disponible' ? `${upd.version} disponible`
     : upd?.fase === 'descargando' ? `bajando ${upd.version}…`
-    : `v${v}`;
+    : `v${v}`);
   chip.classList.toggle('is-pending', upd?.fase === 'disponible' || upd?.fase === 'listo');
   chip.dataset.tip = upd?.fase === 'listo' ? 'Reiniciar y actualizar'
     : upd?.fase === 'disponible' ? 'Ver la versión nueva'
@@ -678,8 +851,7 @@ function cablearShell() {
     renderLista();
     const editor = document.getElementById('editor');
     if (!editor?.contains(document.activeElement) || !entrada(S.sel)) renderEditor();
-    const sub = document.querySelector('.ox-viewhead__sub');
-    if (sub) sub.textContent = subtitulo();
+    cambiarTexto(document.querySelector('.ox-viewhead__sub'), subtitulo());
     if (S.entradas.length > antes) {
       Toast.show({ title: 'Glosario actualizado', text: plural(S.entradas.length - antes, 'entrada nueva', 'entradas nuevas'), icon: 'book' });
     }
@@ -689,20 +861,30 @@ function cablearShell() {
 /** Lo que vive fuera de la vista: contadores del rail, statusbar, contexto. */
 function actualizarMarco() {
   const n = pendientes().length;
-  document.getElementById('count-todas').textContent = S.entradas.length;
-  document.getElementById('count-revisar').textContent = n;
-  document.getElementById('stat-total').textContent = S.entradas.length;
-  document.getElementById('stat-revisar').textContent = n;
-  const saved = document.querySelector('#stat-saved .ox-statusbar__value');
-  if (saved) saved.textContent = S.exportado ? relTime(S.exportado) : '—';
+  cambiarTexto(document.getElementById('count-todas'), S.entradas.length);
+  cambiarTexto(document.getElementById('count-revisar'), n);
+  cambiarTexto(document.getElementById('stat-total'), S.entradas.length);
+  cambiarTexto(document.getElementById('stat-revisar'), n);
+  cambiarTexto(document.querySelector('#stat-saved .ox-statusbar__value'), S.exportado ? relTime(S.exportado) : '—');
 
+  // Se reescribe solo si cambió: repintarlo en cada guardado le cortaba el
+  // tooltip a quien lo estuviera mirando.
   const md = S.info?.glosario || '';
-  document.getElementById('rail-foot').innerHTML =
-    md ? `<div class="ox-meta" data-tip="${esc(md)}">${path(md)}</div>` : '';
+  const foot = document.getElementById('rail-foot');
+  if (foot.dataset.md !== md) {
+    foot.dataset.md = md;
+    foot.innerHTML = md ? `<div class="ox-meta" data-tip="${esc(md)}">${path(md)}</div>` : '';
+  }
 
+  // El nombre de la expresión abierta: aparece, cambia y se va con fundidos.
   const e = Router.name !== 'ajustes' ? entrada(S.sel) : null;
-  document.getElementById('titlebar-context').innerHTML =
-    e ? `${Icons.svg('book', 'ox-icon--sm')}<span>${esc(e.expresion)}</span>` : '';
+  const ctx = document.getElementById('titlebar-context');
+  const actual = ctx.querySelector(':scope > .id-ctx:not([data-state="closing"])');
+  if (e && actual) cambiarTexto(actual.querySelector('span'), e.expresion);
+  else if (e) {
+    const saliendo = ctx.querySelector(':scope > .id-ctx[data-state="closing"]');
+    ctx.insertAdjacentHTML('beforeend', `<span class="id-ctx ox-in-fade${saliendo ? ' is-after' : ''}">${Icons.svg('book', 'ox-icon--sm')}<span>${esc(e.expresion)}</span></span>`);
+  } else if (actual) exit(actual, { fallback: 260 });
 }
 
 /* ══ Color de la ventana ═════════════════════════════════════════════════════

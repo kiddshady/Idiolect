@@ -9,13 +9,19 @@
 .id-search { width: 240px; }
 
 /* ── Filtro por etiqueta ─────────────────────────────────────────────────── */
+/* Aparece y se va con el revelado de alto (.ox-reveal), no con display:none:
+   la primera etiqueta que se anota empuja la lista hacia abajo en vez de
+   hacerla saltar. El revelado recorta, así que su caja lleva 4px de más a
+   cada lado (y los devuelve con margen negativo): es el aire que necesita el
+   anillo de foco de la primera y la última etiqueta para no cortarse. */
+#filtros-wrap { margin: 0 -4px; }
+#filtros-wrap > * { padding: 0 4px; }
 .id-filtros {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: var(--ox-3) 0 var(--ox-2);
 }
-.id-filtros.is-empty { display: none; }
 
 .id-tag {
   display: inline-flex;
@@ -34,11 +40,43 @@
 }
 .id-tag:hover { background: var(--ox-wash-2); color: var(--ox-text-2); }
 .id-tag.is-on { background: var(--ox-wash-3); color: var(--ox-text); }
-.id-tag:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ox-ring); }
+/* Una etiqueta nueva entra; una que ya nadie usa se esfuma antes de irse. */
+.id-tag.is-entering { animation: ox-fade-in var(--ox-t-2) var(--ox-ease) both; }
+.id-tag[data-state='closing'] { animation: ox-fade-out var(--ox-t-1) var(--ox-ease-in) both; pointer-events: none; }
 .id-tag__n { color: var(--ox-text-4); font-size: var(--ox-fs-11); transition: var(--tr-color); }
 .id-tag.is-on .id-tag__n { color: var(--ox-text-3); }
 
+/* ── Lista ───────────────────────────────────────────────────────────────────
+   La lista y su mensaje («ninguna coincide», «nada pendiente») comparten una
+   sola celda: cuando uno reemplaza al otro hacen un relevo en el mismo lugar,
+   sin que el nuevo aparezca debajo del viejo y después salte. */
+.id-lista { display: grid; padding-bottom: 24px; }
+.id-lista > * { grid-area: 1 / 1; min-width: 0; align-self: start; }
 .id-nada { padding: var(--ox-6) 0; }
+.id-lista__msg { animation: ox-fade-in var(--ox-t-2) var(--ox-ease) both; }
+.id-lista__msg.is-after { animation-delay: 90ms; }
+.id-lista__msg.is-settled { animation: none; }
+.id-lista__msg[data-state='closing'] { animation: id-desvanecer 160ms var(--ox-ease-both) both; }
+
+/* Cada fila va en un envoltorio que se abre y se cierra con el truco de
+   grid-template-rows (0fr ↔ 1fr): una fila que entra le hace lugar de a poco
+   a las de abajo, y una que se va (confirmada desde Por revisar, filtrada por
+   la búsqueda) se cierra en vez de desaparecer y hacer saltar la lista. El
+   recorte solo va mientras se mueve: quieta, recortaría el anillo de foco. */
+.id-fila { display: grid; grid-template-rows: 1fr; }
+.id-fila > * { min-height: 0; }
+.id-fila:is(.is-entering, [data-state='closing']) > * { overflow: hidden; }
+.id-fila.is-entering { animation: id-abrir var(--ox-t-2) var(--ox-ease) both; }
+.id-fila[data-state='closing'] { animation: id-cerrar 160ms var(--ox-ease-both) both; }
+@keyframes id-abrir  { from { grid-template-rows: 0fr; opacity: 0 } }
+@keyframes id-cerrar { to   { grid-template-rows: 0fr; opacity: 0 } }
+/* Sin `from`: sale desde donde esté, aunque todavía no hubiera terminado de entrar. */
+@keyframes id-desvanecer { to { opacity: 0 } }
+
+/* La fila va de borde a borde de la columna, y la columna es un .ox-scroll
+   que recorta: el anillo de base.css (3.5px por fuera) se cortaba a la
+   izquierda. Va hacia adentro, como el de la .ox-tr de Onyx. */
+.id-row:focus-visible { box-shadow: inset 0 0 0 1.5px var(--ox-ring); }
 
 /* ── Editor ──────────────────────────────────────────────────────────────── */
 .id-editor__vacio {
@@ -52,6 +90,15 @@
   color: var(--ox-text-4);
 }
 .id-editor__titulo { font-size: var(--ox-fs-15); font-weight: var(--ox-w-medium); }
+
+/* El contenido del editor va en un panel, y el panel en una celda única:
+   al elegir otra expresión el panel viejo se esfuma mientras el nuevo asoma
+   en el mismo lugar (un relevo), en vez de cambiar todo de un cuadro al otro. */
+.id-editor { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.id-editor__panel { grid-area: 1 / 1; display: flex; flex-direction: column; min-height: 0; }
+.id-editor__panel.is-entering { animation: ox-fade-in var(--ox-t-2) var(--ox-ease) both; }
+.id-editor__panel.is-after { animation-delay: 70ms; }
+.id-editor__panel[data-state='closing'] { animation: id-desvanecer 160ms var(--ox-ease-both) both; }
 
 .id-editor .ox-inspector__body { display: flex; flex-direction: column; gap: var(--ox-4); }
 .id-editor .ox-textarea { resize: vertical; min-height: 0; }
@@ -72,7 +119,17 @@
 }
 
 /* ── Versión en la statusbar: es el botón del actualizador ───────────────── */
-.id-version { cursor: pointer; transition: color var(--ox-t-1) var(--ox-ease-soft); }
+/* Ocupa todo el alto de la statusbar, que es el borde de abajo de la ventana:
+   el anillo de afuera se cortaba contra ese canto. Va hacia adentro. */
+.id-version { cursor: pointer; }
 .id-version:hover { color: var(--ox-text); }
-.id-version:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--ox-ring); border-radius: var(--ox-r-xs); }
+.id-version:focus-visible { box-shadow: inset 0 0 0 1.5px var(--ox-ring); border-radius: var(--ox-r-xs); }
 .id-version.is-pending .ox-statusbar__value { color: var(--ox-text); }
+
+/* ── El nombre de la expresión abierta, en la titlebar ───────────────────── */
+.id-ctx { display: inline-flex; align-items: center; gap: var(--ox-2); }
+/* Una sola celda: si se cierra la expresión y enseguida se abre otra, la que
+   llega no aparece al lado de la que se va (y después salta al centro). */
+#titlebar-context { display: grid; }
+#titlebar-context > .id-ctx { grid-area: 1 / 1; justify-self: center; }
+.id-ctx.is-after:not([data-state]) { animation-delay: 90ms; }

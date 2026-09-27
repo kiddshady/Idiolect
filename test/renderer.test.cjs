@@ -62,7 +62,7 @@ app.whenReady().then(async () => {
   const js = (c) => win.webContents.executeJavaScript(c);
   const click = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)});
     if (!el) return false; el.click(); return true; })()`);
-  const filas = () => js(`[...document.querySelectorAll('.id-row .ox-listitem__title')].map(e => e.textContent)`);
+  const filas = () => js(`[...document.querySelectorAll('.id-fila:not([data-state="closing"]) .ox-listitem__title')].map(e => e.textContent)`);
   const cambiar = (sel, valor) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)});
     if (!el) return false; el.value = ${JSON.stringify(valor)}; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
   /** Dónde cae el modal: tiene que estar entero dentro de la ventana. */
@@ -172,6 +172,186 @@ app.whenReady().then(async () => {
   ok('cero title= nativo', (await js(`document.querySelectorAll('[title]').length`)) === 0);
   const hex = await js(`import('./js/ui.js').then(m => m.colorToken('--ox-bg'))`);
   ok('el fondo del tema coincide con el backgroundColor de main.cjs', String(hex).toLowerCase() === BG_MAIN, `${hex} vs ${BG_MAIN}`);
+
+  /* ── 9-bis. Ningún anillo de foco se corta ─────────────────────────────────
+     El anillo de base.css sale 3.5px por fuera del elemento. Si el elemento se
+     ve entero pero esos 3.5px caen afuera de un contenedor que recorta (un
+     .ox-scroll, el borde de la ventana) o encima del canto de una superficie
+     (una card, el carril del segmentado), con Tab se ve cortado: pasó en los
+     controles de ventana, el primer ítem del rail, el segmentado y las filas
+     de una tabla de borde a borde (Apex, sep 2026). Cada elemento se enfoca
+     como con teclado y se mide su anillo real (solo las sombras duras: una
+     difusa es elevación, no anillo), así los que van hacia adentro cuentan
+     cero. Las filas de tabla se prueban como si tuvieran tabindex, porque las
+     apps se lo ponen. */
+  console.log('\n9-bis. Ningún anillo de foco se corta');
+  const AUDITAR_ANILLOS = `((scope) => {
+  if (!document.getElementById('aud-notr')) document.head.insertAdjacentHTML('beforeend', '<style id="aud-notr">*,*::before{transition:none!important}</style>');
+  // Cuánto sale el anillo REAL por fuera del elemento: se lo enfoca como con
+  // teclado y se leen sus sombras de afuera y su outline.
+  const extent = (el) => {
+    el.focus({ focusVisible: true, preventScroll: true });
+    const s = getComputedStyle(el);
+    let m = 0;
+    for (const part of s.boxShadow.split(/,(?![^(]*\\))/)) {
+      if (part.includes('inset') || part.trim() === 'none') continue;
+      const nums = part.replace(/rgba?\\([^)]*\\)|oklch\\([^)]*\\)/g, '').match(/-?[\\d.]+px/g) || [];
+      const [x = 0, y = 0, blur = 0, spread = 0] = nums.map(parseFloat);
+      if (blur > 0) continue;   // una sombra difusa (elevación, brillo) no es el anillo
+      m = Math.max(m, spread + Math.max(Math.abs(x), Math.abs(y)));
+    }
+    if (s.outlineStyle !== 'none' && !/rgba\\(0, 0, 0, 0\\)/.test(s.outlineColor)) m = Math.max(m, parseFloat(s.outlineWidth) + parseFloat(s.outlineOffset));
+    el.blur();
+    return m;
+  };
+  const SEL = 'a[href],button:not([disabled]):not([tabindex="-1"]),input:not([disabled]):not([type=hidden]),select,textarea,[tabindex]:not([tabindex="-1"]),[contenteditable="true"]';
+  const name = (el) => {
+    const id = el.id ? '#' + el.id : '';
+    const cls = [...el.classList].slice(0, 2).map((c) => '.' + c).join('');
+    const txt = (el.getAttribute('aria-label') || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 24);
+    return el.tagName.toLowerCase() + id + cls + (txt ? ' «' + txt + '»' : '');
+  };
+  const out = [];
+  for (const el of scope.querySelectorAll(SEL)) {
+    if (el.closest('[inert],[hidden],[aria-hidden="true"]')) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) continue;
+    const R = extent(el);
+    if (R <= 0.5) continue;
+    const boxes = [{ who: 'ventana', l: 0, t: 0, r: innerWidth, b: innerHeight }];
+    for (let a = el.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      if (s.overflowX !== 'visible' || s.overflowY !== 'visible' || s.clipPath !== 'none' || /paint|strict|content/.test(s.contain)) {
+        const ar = a.getBoundingClientRect();
+        const l = ar.left + a.clientLeft; const t = ar.top + a.clientTop;
+        boxes.push({ who: name(a), l, t, r: l + a.clientWidth, b: t + a.clientHeight });
+      }
+    }
+    const e = 0.5;
+    // ¿Roza el canto de una superficie (card, panel, modal)? Un fondo o una
+    // sombra con radio: el anillo se pisa con su borde aunque nada lo recorte.
+    for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      const s = getComputedStyle(a);
+      const surf = (s.backgroundColor !== 'rgba(0, 0, 0, 0)' || s.boxShadow !== 'none') && parseFloat(s.borderTopLeftRadius) > 0;
+      if (!surf) continue;
+      const ar = a.getBoundingClientRect();
+      const g = [r.left - ar.left, r.top - ar.top, ar.right - r.right, ar.bottom - r.bottom];
+      if (g.some((x) => x < -e)) continue;
+      const lados = ['izq', 'arriba', 'der', 'abajo'].filter((_, i) => g[i] < R - e).map((n, i) => n);
+      const det = g.map((x, i) => ['izq', 'arriba', 'der', 'abajo'][i] + ' ' + x.toFixed(1)).filter((_, i) => g[i] < R - e);
+      if (det.length) { out.push(name(el) + '  roza ' + name(a) + '  [' + det.join(', ') + ']'); break; }
+    }
+    for (const bx of boxes) {
+      const inside = r.left >= bx.l - e && r.top >= bx.t - e && r.right <= bx.r + e && r.bottom <= bx.b + e;
+      if (!inside) break;   // el elemento mismo ya está recortado: no es culpa del anillo
+      const lados = [];
+      if (r.left - R < bx.l - e) lados.push('izq ' + (r.left - bx.l).toFixed(1));
+      if (r.top - R < bx.t - e) lados.push('arriba ' + (r.top - bx.t).toFixed(1));
+      if (r.right + R > bx.r + e) lados.push('der ' + (bx.r - r.right).toFixed(1));
+      if (r.bottom + R > bx.b + e) lados.push('abajo ' + (bx.b - r.bottom).toFixed(1));
+      if (lados.length) { out.push(name(el) + '  ← ' + bx.who + '  [' + lados.join(', ') + ']'); break; }
+    }
+  }
+  document.querySelectorAll('.ox-scroll, .ox-main, [class*="scroll"]').forEach((s) => { s.scrollTop = 0; s.scrollLeft = 0; });
+  return out;
+})(document)`;
+  // Sin foco en la ventana, :focus-visible no se aplica y todo anillo mide
+  // cero: la auditoría pasaría sin haber medido nada.
+  win.focus();
+  win.webContents.focus();
+  await sleep(150);
+  ok('la ventana tiene el foco (si no, no hay anillos que medir)', await js('document.hasFocus()'));
+  // En el glosario, con una entrada abierta: así el editor entero (switch,
+  // campos, pie) entra en la auditoría, no solo su estado vacío.
+  for (const v of ['revisar', 'glosario', 'ajustes']) {
+    await click(`.ox-navitem[data-view="${v}"]`);
+    await sleep(700);
+    if (v === 'glosario') { await click('.id-row[data-entrada]'); await sleep(500); }
+    const cortes = await js(AUDITAR_ANILLOS);
+    ok(`${v}: ningún anillo de foco se corta ni roza un canto`, cortes.length === 0, '\n      ' + cortes.join('\n      '));
+  }
+  await js(`document.getElementById('aud-notr')?.remove()`);
+
+  /* ── 10. Transiciones ──────────────────────────────────────────────────────
+     Un movimiento no se aprueba mirándolo pasar: se muestrea cada ~40 ms y se
+     mide la curva. Lo que se busca es el cuadro en que algo cambia de golpe:
+     el editor reemplazado de un cuadro al otro, una fila que desaparece y hace
+     saltar la lista, un número que cambia sin fundido. */
+  console.log('\n10. Transiciones');
+  await click('.ox-navitem[data-view="glosario"]');
+  await sleep(700);
+  const [idA, idB] = await js(`[...document.querySelectorAll('.id-row[data-entrada]')].map(r => r.dataset.entrada).slice(0, 2)`);
+  await click(`.id-row[data-entrada="${idA}"]`);
+  await sleep(500);
+  const relevo = await js(`(async () => {
+    const panel = (k) => document.querySelector('#editor > .id-editor__panel[data-clave="' + k + '"]');
+    const op = (el) => el?.isConnected ? Math.round(+getComputedStyle(el).opacity * 100) : null;
+    const viejo = panel(${JSON.stringify(idA)});
+    const rv = viejo.getBoundingClientRect();
+    document.querySelector('.id-row[data-entrada="${idB}"]').click();
+    const filas = [];
+    for (let t = 0; t <= 360; t += 40) {
+      const nuevo = panel(${JSON.stringify(idB)});
+      const rn = nuevo?.getBoundingClientRect();
+      filas.push({ t, viejo: op(viejo), nuevo: op(nuevo), mismoLugar: !!rn && rn.left === rv.left && rn.top === rv.top,
+        ids: document.querySelectorAll('#c-expresion').length });
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return filas;
+  })()`);
+  const serie = relevo.map((f) => `${f.t}:${f.viejo ?? '-'}/${f.nuevo ?? '-'}`).join(' ');
+  ok('al elegir otra, el editor viejo se esfuma de a poco (no se va de un cuadro al otro)',
+    relevo.some((f) => f.viejo > 5 && f.viejo < 95), serie);
+  ok('y termina de irse', relevo.at(-1).viejo === null, serie);
+  ok('el nuevo espera su turno: arranca invisible y llega entero', relevo[0].nuevo <= 5 && relevo.at(-1).nuevo === 100, serie);
+  ok('cuando el nuevo ya se ve, el viejo va por menos de la mitad', relevo.every((f) => !(f.nuevo > 50 && f.viejo > 50)), serie);
+  ok('los dos en el mismo lugar, sin salto', relevo.every((f) => f.mismoLugar), serie);
+  ok('mientras se relevan, un solo #c-expresion', relevo.every((f) => f.ids === 1), JSON.stringify(relevo.map((f) => f.ids)));
+
+  const cierre = await js(`(async () => {
+    const b = document.getElementById('buscar');
+    const antes = document.querySelectorAll('.id-fila').length;
+    b.value = 'holis'; b.dispatchEvent(new Event('input'));
+    const altos = [];
+    for (let t = 0; t <= 320; t += 40) {
+      const f = document.querySelector('.id-fila[data-state="closing"]');
+      altos.push(f ? Math.round(f.getBoundingClientRect().height) : null);
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    const quedan = document.querySelectorAll('.id-fila').length;
+    b.value = ''; b.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 50));
+    const entrando = [...document.querySelectorAll('.id-fila.is-entering')];
+    const aMedias = entrando.map((f) => Math.round(f.getBoundingClientRect().height));
+    await new Promise((r) => setTimeout(r, 400));
+    const enteras = entrando.map((f) => Math.round(f.getBoundingClientRect().height));
+    return { antes, altos, quedan, aMedias, enteras };
+  })()`);
+  const alt = cierre.altos.filter((h) => h !== null);
+  ok('una fila filtrada se cierra de a poco', alt.length >= 2 && alt.every((h, i) => !i || h <= alt[i - 1]) && alt.some((h) => h > 0 && h < alt[0]), JSON.stringify(cierre));
+  ok('y al terminar sale del DOM', cierre.quedan === 1, JSON.stringify(cierre));
+  ok('al soltar la búsqueda, las que vuelven se abren (no aparecen de golpe)',
+    cierre.aMedias.length === cierre.antes - 1 && cierre.aMedias.every((h, i) => h < cierre.enteras[i]), JSON.stringify(cierre));
+
+  await click(`.id-row[data-entrada="${idA}"]`);
+  await sleep(500);
+  const fundido = await js(`(async () => {
+    // Se busca en cada muestra: al guardar, el vigía de la carpeta puede
+    // repintar el editor en el lugar, y el nodo de antes queda desmontado.
+    document.getElementById('confirmada').click();
+    const ops = [];
+    for (let t = 0; t <= 400; t += 40) {
+      ops.push(Math.round(+getComputedStyle(document.getElementById('nota-confirmada')).opacity * 100));
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return { ops };
+  })()`);
+  ok('la nota de «Confirmada» cambia con un fundido, no de golpe', fundido.ops.some((o) => o < 60) && fundido.ops.at(-1) === 100, JSON.stringify(fundido.ops));
+  await click('#confirmada');
+  await sleep(700);
 
   // El vigía de la carpeta la tiene tomada hasta que la app sale: si no se
   // deja borrar, queda en %TEMP% y no pasa nada.
