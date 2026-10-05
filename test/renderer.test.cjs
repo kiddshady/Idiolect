@@ -53,6 +53,9 @@ app.whenReady().then(async () => {
     frame: false, show: false, paintWhenInitiallyHidden: true, backgroundColor: '#000',
     webPreferences: { preload: path.join(ROOT, 'preload.cjs'), contextIsolation: true },
   });
+  // El actualizador, como en `npm start`: sin empaquetar no hay nada que
+  // actualizar, y el clic en la versión lo tiene que decir (sección 11).
+  require(path.join(ROOT, 'src', 'actualizador.cjs')).iniciar(() => win, { empaquetada: false });
   const errores = [];
   win.webContents.on('console-message', (e) => { if (e.level >= 2) errores.push(`${e.level}: ${e.message}`); });
   await win.loadFile(path.join(ROOT, 'renderer', 'index.html'));
@@ -367,6 +370,37 @@ app.whenReady().then(async () => {
   ok('la nota de «Confirmada» cambia con un fundido, no de golpe', fundido.ops.some((o) => o < 60) && fundido.ops.at(-1) === 100, JSON.stringify(fundido.ops));
   await click('#confirmada');
   await sleep(700);
+
+  /* ── 11. Clics de más en el actualizador ──────────────────────────────────
+     Desde el código fuente no hay nada que actualizar y el clic dice por qué.
+     Cinco clics seguidos eran cinco búsquedas y cinco carteles encimados. */
+  console.log('\n11. Clics de más en el actualizador');
+  const cartelesUpd = await js(`(async () => {
+    const chip = document.getElementById('stat-version');
+    for (let i = 0; i < 5; i++) chip.click();
+    await new Promise((r) => setTimeout(r, 600));
+    const tras5 = [...document.querySelectorAll('#ox-layer .ox-toast:not([data-state="closing"])')]
+      .filter((t) => /no se actualiza sola/.test(t.textContent)).length;
+    chip.click();
+    await new Promise((r) => setTimeout(r, 400));
+    const tras6 = [...document.querySelectorAll('#ox-layer .ox-toast:not([data-state="closing"])')]
+      .filter((t) => /no se actualiza sola/.test(t.textContent)).length;
+    return { tras5, tras6 };
+  })()`);
+  ok('cinco clics seguidos, un solo cartel', cartelesUpd.tras5 === 1, JSON.stringify(cartelesUpd));
+  ok('con el cartel en pantalla, otro clic no apila otro igual', cartelesUpd.tras6 === 1, JSON.stringify(cartelesUpd));
+  await click('.ox-navitem[data-view="ajustes"]');
+  await sleep(500);
+  const botonUpd = await js(`(async () => {
+    const b = document.getElementById('buscar-updates');
+    b.click(); b.click(); b.click();
+    const durante = b.disabled && b.dataset.ocupado === '1';
+    await new Promise((r) => setTimeout(r, 700));
+    const nb = document.getElementById('buscar-updates');
+    return { durante, despues: !nb.disabled && nb.dataset.ocupado === '0' && /Buscar actualizaciones/.test(nb.textContent) };
+  })()`);
+  ok('el botón de Ajustes queda ocupado mientras busca', botonUpd.durante, JSON.stringify(botonUpd));
+  ok('y vuelve a estar libre al terminar', botonUpd.despues, JSON.stringify(botonUpd));
 
   // El vigía de la carpeta la tiene tomada hasta que la app sale: si no se
   // deja borrar, queda en %TEMP% y no pasa nada.

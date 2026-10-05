@@ -12,7 +12,7 @@
 import { Icons } from './icons.js';
 import { Tooltip, Toast, Modal } from './overlays.js';
 import Router from './router.js';
-import { initClickFlash, initScrollFades, raf2, toggleReveal, swap, frase, numero, contador, reconcile, deslizarAncho } from './motion.js';
+import { initClickFlash, initScrollFades, raf2, toggleReveal, swap, frase, numero, contador, reconcile, deslizarAncho, ocupar } from './motion.js';
 import { esc, paint, head, empty, mark, attempt, copy, colorToken, path } from './ui.js';
 import { relTime, plural, fmtBytes } from './format.js';
 
@@ -506,7 +506,7 @@ function viewAjustes() {
               <span class="ox-kv__k">Electron</span><span class="ox-kv__v ox-mono">${esc(S.info?.electron || '—')}</span>
             </div>
             <div class="ox-row" style="gap:8px;margin-top:14px">
-              <button class="ox-btn ox-btn--secondary ox-btn--sm" id="buscar-updates"><i data-icon="retry"></i> Buscar actualizaciones</button>
+              <button class="ox-btn ox-btn--secondary ox-btn--sm" id="buscar-updates" data-ocupado="${buscando ? 1 : 0}"${buscando ? ' disabled' : ''}>${buscando ? ROTULO_BUSCAR.ocupado : ROTULO_BUSCAR.libre}</button>
             </div>
             <p class="ox-meta id-parrafo" style="margin-top:14px">
               Un archivo JSON por expresión en la subcarpeta <span class="ox-mono">entradas</span>. Si editás
@@ -546,6 +546,19 @@ Router.define({
 
 let upd = null;          // el último estado recibido
 let updToast = null;     // el toast persistente mientras descarga
+let buscando = null;     // la búsqueda que pidió el usuario, mientras anda
+let modalAbierto = false;
+
+/* Un cartel por mensaje: si el mismo ya está en pantalla, no se apila otro
+   igual. Cinco clics en la versión eran cinco «Estás al día» encimados. */
+const carteles = new Map();
+function cartel(clave, mostrar) {
+  const t = carteles.get(clave);
+  if (t?.el?.isConnected && t.el.dataset.state !== 'closing') return t;
+  const nuevo = mostrar();
+  carteles.set(clave, nuevo);
+  return nuevo;
+}
 
 function alCambiarUpdate(e) {
   const prev = upd;
@@ -580,11 +593,11 @@ function alCambiarUpdate(e) {
       });
       break;
     case 'al-dia':
-      if (e.manual) Toast.show({ title: 'Estás al día', text: `Idiolect ${e.actual}`, icon: 'check' });
+      if (e.manual) cartel('al-dia', () => Toast.show({ title: 'Estás al día', text: `Idiolect ${e.actual}`, icon: 'check' }));
       break;
     case 'error':
       updToast?.close(); updToast = null;
-      if (e.manual || prev?.fase === 'descargando') Toast.error('No se pudo actualizar', e.error);
+      if (e.manual || prev?.fase === 'descargando') cartel(`error:${e.error}`, () => Toast.error('No se pudo actualizar', e.error));
       break;
   }
 }
@@ -597,10 +610,12 @@ function pintarVersion() {
   const texto = upd?.fase === 'listo' ? `${upd.version} lista para instalar`
     : upd?.fase === 'disponible' ? `${upd.version} disponible`
     : upd?.fase === 'descargando' ? `bajando ${upd.version}…`
+    : buscando ? 'buscando…'
     : `v${v}`;
   // El ítem cambia de ancho con el texto: viaja, y lo de al lado lo acompaña.
   deslizarAncho(chip, () => frase(val, esc(texto)));
   chip.classList.toggle('is-pending', upd?.fase === 'disponible' || upd?.fase === 'listo');
+  chip.setAttribute('aria-busy', String(!!buscando));
   chip.dataset.tip = upd?.fase === 'listo' ? 'Reiniciar y actualizar'
     : upd?.fase === 'disponible' ? 'Ver la versión nueva'
     : 'Buscar actualizaciones';
@@ -608,7 +623,13 @@ function pintarVersion() {
 
 async function modalUpdate() {
   const e = upd;
-  if (!e || e.fase !== 'disponible') return;
+  // Un clic más con el modal ya abierto no lo vuelve a abrir encima.
+  if (!e || e.fase !== 'disponible' || modalAbierto) return;
+  modalAbierto = true;
+  try { await mostrarModalUpdate(e); } finally { modalAbierto = false; }
+}
+
+async function mostrarModalUpdate(e) {
   const body = document.createElement('div');
   body.className = 'ox-col';
   body.style.gap = '14px';
@@ -639,10 +660,37 @@ function clicVersion() {
   return buscarUpdates();
 }
 
-async function buscarUpdates() {
+/* El rótulo del botón de Ajustes en cada estado. */
+const ROTULO_BUSCAR = {
+  libre: `${Icons.svg('retry')} Buscar actualizaciones`,
+  ocupado: `${Icons.spinner()} Buscando…`,
+};
+
+/** Mientras anda una búsqueda, los clics de más se suman a esa: ni otra
+    búsqueda ni otro cartel. La versión de la statusbar dice «buscando…» y el
+    botón de Ajustes pasa a ocupado. (El proceso principal tiene su propio
+    freno: esto es para que además se VEA que ya está buscando.) */
+function buscarUpdates() {
+  if (buscando) return buscando;
+  buscando = buscarAhora().finally(() => { buscando = null; marcarBuscando(); });
+  marcarBuscando();
+  return buscando;
+}
+
+async function buscarAhora() {
   const st = await attempt(() => api.update.buscar({ manual: true }), { errorTitle: 'No se pudo buscar' });
   // Los demás desenlaces (al día, disponible, error) llegan por alCambiarUpdate.
-  if (st?.fase === 'sin-soporte') Toast.show({ title: 'Acá no se actualiza sola', text: st.motivo, icon: 'info', duration: 8000 });
+  if (st?.fase === 'sin-soporte') {
+    cartel('sin-soporte', () => Toast.show({ title: 'Acá no se actualiza sola', text: st.motivo, icon: 'info', duration: 8000 }));
+  }
+}
+
+function marcarBuscando() {
+  pintarVersion();
+  const btn = document.getElementById('buscar-updates');
+  if (!btn) return;
+  btn.disabled = !!buscando;
+  ocupar(btn, !!buscando, buscando ? ROTULO_BUSCAR.ocupado : ROTULO_BUSCAR.libre);
 }
 
 function cablearUpdates() {

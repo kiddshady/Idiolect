@@ -107,6 +107,8 @@ function iniciar(getWin, {
 } = {}) {
   dameVentana = getWin;
   estado = { ...VACIO, actual: electronApp?.getVersion() || '' };
+  enCurso = null;
+  instalando = false;
 
   const s = soporte({ empaquetada, portable });
   if (!s.ok) { fijar({ fase: 'sin-soporte', motivo: s.motivo }); return; }
@@ -160,10 +162,23 @@ function fallo(err) {
   if (estado.fase !== 'error' || estado.error !== error) fijar({ fase: 'error', error });
 }
 
-async function buscar({ manual = false } = {}) {
-  if (!autoUpdater || estado.fase === 'sin-soporte') return estado;
-  // Una búsqueda ya en curso, o una descarga andando, no se pisan.
-  if (estado.fase === 'buscando' || estado.fase === 'descargando') return estado;
+/* La búsqueda en curso. No alcanza con mirar `fase === 'buscando'`: esa fase
+   la pone el evento 'checking-for-update', que llega DESPUÉS de llamar a
+   checkForUpdates(). Cinco clics seguidos entraban los cinco antes del
+   primer evento, y cada búsqueda terminaba en su propio cartel. */
+let enCurso = null;
+
+function buscar({ manual = false } = {}) {
+  if (!autoUpdater || estado.fase === 'sin-soporte') return Promise.resolve(estado);
+  if (estado.fase === 'descargando') return Promise.resolve(estado);
+
+  /* Ya hay una andando: se suma a esa. Si la que anda era la silenciosa del
+     arranque y ahora la pide el usuario, pasa a manual: él quiere ver el
+     desenlace. Al revés no, un `manual` no se apaga. */
+  if (enCurso) {
+    if (manual) estado = { ...estado, manual: true };
+    return enCurso;
+  }
 
   /* `manual` se anota sin avisar. Avisarlo acá mandaba el desenlace de la
      búsqueda ANTERIOR con el `manual` nuevo puesto —un "al día" viejo, un error
@@ -171,12 +186,17 @@ async function buscar({ manual = false } = {}) {
      "Buscar actualizaciones" mostraba "Estás al día" dos veces. Lo primero que
      se avisa de esta búsqueda es 'buscando', y lo emite electron-updater. */
   estado = { ...estado, manual };
-  try {
-    await autoUpdater.checkForUpdates();
-  } catch (err) {
-    fallo(err);
-  }
-  return estado;
+  enCurso = (async () => {
+    try {
+      await autoUpdater.checkForUpdates();
+    } catch (err) {
+      fallo(err);
+    } finally {
+      enCurso = null;
+    }
+    return estado;
+  })();
+  return enCurso;
 }
 
 async function descargar() {
@@ -190,8 +210,13 @@ async function descargar() {
   return estado;
 }
 
+let instalando = false;
+
 function instalar() {
   if (!autoUpdater || estado.fase !== 'listo') return false;
+  // Un segundo clic mientras la app se cierra no vuelve a pedir la instalación.
+  if (instalando) return true;
+  instalando = true;
   /* quitAndInstall cierra la app. Llamarlo adentro del handler de IPC deja al
      renderer esperando una respuesta que ya no va a llegar nunca: primero se
      contesta, después se cierra. */

@@ -126,5 +126,37 @@ falso.falla = new Error('ESOCKETTIMEDOUT');
 await upd.descargar();
 ok('la descarga fallida: descargando → error, una sola vez', fases() === 'descargando → error', fases());
 
+console.log('\n5. Varios clics seguidos, una sola búsqueda');
+/* El freno no puede depender de la fase: 'buscando' la pone el evento de
+   electron-updater, que llega después de llamar a checkForUpdates(). Con un
+   falso que tarda como la red, cinco clics seguidos entraban los cinco y
+   cada uno terminaba en su propio "Estás al día". */
+class UpdaterLento extends UpdaterFalso {
+  constructor() { super(); this.llamadas = 0; }
+  async checkForUpdates() {
+    this.llamadas++;
+    await new Promise((r) => setTimeout(r, 30));
+    return super.checkForUpdates();
+  }
+}
+const lento = new UpdaterLento();
+upd.iniciar(() => ventana, { empaquetada: true, portable: false, updater: lento });
+enviados.length = 0;
+await Promise.all([1, 2, 3, 4, 5].map(() => upd.buscar({ manual: true })));
+ok('cinco clics, una sola búsqueda', lento.llamadas === 1, String(lento.llamadas));
+ok('y un solo "al día"', enviados.filter((e) => e.fase === 'al-dia').length === 1, fases());
+
+// La silenciosa del arranque andando y el usuario hace clic: pasa a manual.
+enviados.length = 0;
+const silenciosa = upd.buscar({ manual: false });
+const clic = upd.buscar({ manual: true });
+await Promise.all([silenciosa, clic]);
+ok('un clic durante la silenciosa no busca otra vez', lento.llamadas === 2, String(lento.llamadas));
+ok('y su desenlace llega como manual', enviados.at(-1).fase === 'al-dia' && enviados.at(-1).manual === true, JSON.stringify(enviados.at(-1)));
+
+// Terminada, la siguiente sí busca.
+await upd.buscar({ manual: true });
+ok('terminada la búsqueda, la siguiente busca de nuevo', lento.llamadas === 3, String(lento.llamadas));
+
 console.log(`\n═══ ${pass} ok · ${fail} fallas ═══\n`);
 process.exit(fail ? 1 : 0);
