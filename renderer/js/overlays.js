@@ -84,29 +84,67 @@ const Tooltip = (() => {
     tip.style.top = `${Math.round(y)}px`;
   }
 
+  /* Moverse entre botones vecinos no reinicia la espera larga. No alcanza con
+     mirar `current`: el pointerout del botón anterior llega ANTES que este
+     pointerover y ya lo cerró. Por eso cuenta también el que se acaba de ir.
+     La espera corta (100 ms) es lo que dura su salida: el nuevo aparece
+     cuando el viejo terminó de irse, sin encimarse. Si el ancla se fue del
+     DOM durante la espera, no hay dónde anclarlo: saldría en la esquina. */
+  function programar(el, sigue = () => true) {
+    clearTimeout(timer);
+    const warm = current || performance.now() - left < 400;
+    timer = setTimeout(() => { if (el.isConnected && sigue()) show(el); }, warm ? 100 : 420);
+  }
+
   function init(root = document) {
     root.addEventListener('pointerover', (e) => {
       const el = e.target.closest?.('[data-tip]');
       if (!el || el === anchor) return;
-      clearTimeout(timer);
-      /* Moverse entre botones vecinos no reinicia la espera larga. No alcanza con
-         mirar `current`: el pointerout del botón anterior llega ANTES que este
-         pointerover y ya lo cerró. Por eso cuenta también el que se acaba de ir.
-         La espera corta (100 ms) es lo que dura su salida: el nuevo aparece
-         cuando el viejo terminó de irse, sin encimarse. Si el ancla se fue del
-         DOM durante la espera, no hay dónde anclarlo: saldría en la esquina. */
-      const warm = current || performance.now() - left < 400;
-      timer = setTimeout(() => { if (el.isConnected) show(el); }, warm ? 100 : 420);
+      programar(el);
     });
     root.addEventListener('pointerout', (e) => {
       const el = e.target.closest?.('[data-tip]');
       if (el && el === anchor) hide();
       else if (el) clearTimeout(timer);
     });
+
+    /* Con el teclado también. Solo con el pointerover, el que recorre la
+       ventana con Tab no veía ningún tooltip, y ahí viven los atajos
+       (`data-tip-key`): Quire tenía una docena que la interfaz nunca decía
+       (ux-17). Va cuando el foco es :focus-visible y llegó NAVEGANDO con el
+       teclado: un campo de texto clickeado también es :focus-visible, y un
+       tooltip encima de lo que se está por tipear estorba.
+
+       Navegar es Tab, no cualquier tecla. Con «cualquier tecla» contaba como
+       teclado el foco que pone un script después de una: el Enter o el Escape
+       que cierran un modal (Modal.close devuelve el foco al botón que lo
+       abrió, y ese foco es :focus-visible) o un atajo que enfoca un campo
+       (Ctrl+F). Al cerrar el «Renombrar» de la sonda con Enter, a los 420 ms
+       aparecía «Renombrar F2» encima del botón sin que nadie hubiera tabulado;
+       en Quire, el tacho de «Borrar toda la tinta» al salir de su confirm.
+       Cualquier otra tecla lo apaga, y también corta el que estaba por salir:
+       el que tabula a un campo y empieza a escribir no lo ve aparecer encima.
+       Una app que mueve el foco con otras teclas (las flechas de una barra)
+       las suma acá. */
+    let teclado = false;
+    root.addEventListener('keydown', (e) => { teclado = e.key === 'Tab'; }, true);
+    root.addEventListener('focusin', (e) => {
+      const el = e.target.closest?.('[data-tip]');
+      if (!el || el === anchor || !teclado || !e.target.matches(':focus-visible')) return;
+      programar(el, () => teclado && el.contains(document.activeElement));
+    });
+    root.addEventListener('focusout', (e) => {
+      const el = e.target.closest?.('[data-tip]');
+      if (el && el === anchor) hide();
+      else if (el) clearTimeout(timer);
+    });
+
     // Un tooltip flotando sobre un click o un scroll es basura visual.
-    root.addEventListener('pointerdown', () => hide(true));
+    root.addEventListener('pointerdown', () => { teclado = false; hide(true); });
     window.addEventListener('scroll', () => hide(true), true);
-    window.addEventListener('blur', () => hide(true));
+    // Volver a la ventana (Alt+Tab) le devuelve el foco al mismo botón: eso
+    // no es tabular hasta él.
+    window.addEventListener('blur', () => { teclado = false; hide(true); });
   }
 
   return { init, hide };
@@ -183,7 +221,10 @@ const Toast = (() => {
 })();
 
 /* ══ Menú ════════════════════════════════════════════════════════════════════
-   items: { label, icon, key, danger, selected, onSelect } | { sep:true } | { groupLabel } */
+   items: { label, icon, key, hint, danger, selected, disabled, onSelect }
+          | { sep:true } | { groupLabel }
+   `hint` es una aclaración atenuada después del nombre: las medidas de un
+   papel, «del sistema» en la impresora predeterminada. */
 
 const Menu = (() => {
   let open = null;
@@ -252,9 +293,14 @@ const Menu = (() => {
       b.innerHTML = `
         ${it.icon ? Icons.svg(it.icon) : '<span style="width:14px"></span>'}
         <span class="ox-truncate"></span>
+        ${it.hint ? '<span class="ox-menuitem__hint"></span>' : ''}
         ${it.key ? `<span class="ox-menuitem__key">${it.key}</span>` : ''}
         ${it.selected ? Icons.svg('check', 'ox-icon--sm') : ''}`;
       b.querySelector('span.ox-truncate').textContent = it.label;
+      /* El hint se dibuja. Antes se descartaba en silencio, y tres menús de
+         Quire lo mandaban: el papel con sus medidas y las impresoras con «del
+         sistema» (ux-07). textContent: suele venir de un dato. */
+      if (it.hint) b.querySelector('.ox-menuitem__hint').textContent = it.hint;
       b.addEventListener('click', () => { close(); it.onSelect?.(it); });
       el.appendChild(b);
     });
@@ -302,18 +348,61 @@ const Menu = (() => {
 
 /* ══ Modal ═══════════════════════════════════════════════════════════════════ */
 
+/* Los campos de un renglón: ahí Enter es «listo» y no un salto de línea. */
+const UN_RENGLON = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number']);
+
 const Modal = (() => {
   let open = null;
 
-  function close(result) {
+  /* Cierra el que está abierto. `pisado` lo pasa solo show(), cuando abre
+     otro encima: el velo se queda para el nuevo y la caja sale en relevo. No
+     es una opción de Modal.close: desde afuera, un close que dejara el velo
+     puesto lo dejaría huérfano para siempre. */
+  function cerrar(result, pisado = false) {
     if (!open) return;
     const { scrim, anim, resolve, restore } = open;
     open = null;
     document.removeEventListener('keydown', onKey, true);
+    /* La caja que se va ya no contesta. data-state=closing no apaga los
+       eventos y .ox-modal lleva pointer-events: auto: durante su salida se
+       la podía clickear, y su botón llamaba a close(), que cierra al que
+       esté abierto —el NUEVO—. Medido: el «Borrar todo» de abajo, a los
+       40 ms, contestaba con su valor el modal de arriba. */
+    anim.inert = true;
+    if (pisado) anim.classList.add('ox-modal__anim--pisada');
     exit(anim, { fallback: 300 });
-    exit(scrim, { fallback: 300 });
+    if (!pisado) exit(scrim, { fallback: 300 });
     restore?.focus?.();
     resolve(result);
+  }
+  const close = (result) => cerrar(result);
+
+  /* El velo de un modal que se acaba de cerrar, si todavía se está yendo:
+     el que abre ahora lo revive en vez de poner otro debajo (ver show). */
+  function veloSaliendo() {
+    const v = [...layer().children].reverse()
+      .find((n) => n.classList.contains('ox-scrim') && n.dataset.state === 'closing');
+    if (!v) return null;
+    const op = +getComputedStyle(v).opacity;
+    // Sin data-state, exit() ya no lo saca (ver exit en motion.js). Vuelve a
+    // su opacidad desde donde iba: --ox-desde es el `from` de su animación.
+    delete v.dataset.state;
+    v.style.setProperty('--ox-desde', String(op));
+    v.classList.add('ox-scrim--vuelve');
+    return v;
+  }
+
+  /* Con una caja todavía saliendo, la nueva espera su turno (is-after). Si la
+     de abajo se cerró en este mismo cuadro (close y show seguidos), también
+     pasa a la salida del relevo: todavía no se movió, así que cambiarle la
+     curva no salta. Si ya venía saliendo, se la deja como va. */
+  function cajaSaliendo() {
+    const a = [...layer().children]
+      .find((n) => n.classList.contains('ox-modal__anim') && n.dataset.state === 'closing');
+    if (!a) return false;
+    const t = a.getAnimations()[0]?.currentTime;
+    if (t == null || t < 17) a.classList.add('ox-modal__anim--pisada');
+    return true;
   }
 
   function onKey(e) {
@@ -338,18 +427,72 @@ const Modal = (() => {
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }
 
+  /* Enter en un campo de un renglón resuelve con la acción primaria, como en
+     cualquier diálogo de escritorio: sin esto, escribir «1-7, 12» en el rango
+     de Quire y apretar Enter no hacía nada (ux-06, imprimir-16). Solo si hay
+     UNA primaria y está prendida: una vista que apaga «Aplicar» mientras el
+     dato no sirve tiene que poder frenarlo. Nunca con la roja
+     (`danger-solid`): lo que no tiene vuelta atrás no sale de un Enter
+     tipeado al pasar. Escucha en la burbuja del propio modal, así un campo
+     que maneja su Enter (y llama a preventDefault) gana. */
+  function alEnter(e) {
+    if (!open || e.key !== 'Enter' || e.defaultPrevented || e.isComposing) return;
+    if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.target.tagName !== 'INPUT' || !UN_RENGLON.has(e.target.type)) return;
+    // Con un menú abierto encima (un select del diálogo), el Enter es suyo.
+    if (document.querySelector('.ox-menu:not([data-state="closing"])')) return;
+    const primarias = open.botones.filter(({ a }) => a.variant === 'primary');
+    if (primarias.length !== 1 || primarias[0].b.disabled) return;
+    /* El preventDefault no es de adorno: al cerrar, el foco vuelve al botón
+       que abrió el modal, y el mismo Enter le llegaba como click y lo volvía
+       a abrir. Medido en el humo. */
+    e.preventDefault();
+    close(primarias[0].a.value);
+  }
+
+  /* El foco de arranque, si ninguna acción pide `autofocus`: el primer campo
+     del cuerpo —es lo que se viene a hacer—; si no hay, la acción primaria; si
+     no, la primera del pie. Nunca la cruz del encabezado: antes iba al primer
+     botón o campo del modal, que en orden es la cruz, y lo que se tipeaba no
+     entraba a ningún lado. */
+  function focoInicial(bodyEl, foot, botones) {
+    const campo = [...bodyEl.querySelectorAll('input:not([type="hidden"]), textarea, select')]
+      .find((el) => !el.disabled && el.getClientRects().length);
+    return campo
+      || botones.find(({ a, b }) => a.variant === 'primary' && !b.disabled)?.b
+      || foot?.querySelector('button:not(:disabled)')
+      || null;
+  }
+
   /**
    * Modal.show({ title, sub, body, actions, width, dismissible })
    * actions: [{ label, value, variant, autofocus }]  → resuelve con `value`.
    * body puede ser string HTML o un Node.
+   * El foco arranca en la acción con `autofocus`; sin ninguna, en el primer
+   * campo del cuerpo (ver focoInicial). Enter en un campo de un renglón
+   * resuelve con la única acción `primary` (ver alEnter).
    */
   function show({ title, sub = '', body = '', actions = [], width, dismissible = true } = {}) {
     return new Promise((resolve) => {
-      const scrim = document.createElement('div');
-      scrim.className = 'ox-scrim';
+      /* Un modal abierto encima de otro lo pisa: el de abajo se contesta con
+         null y sale con su exit(). Antes quedaba huérfano —su promesa no se
+         resolvía nunca, y su velo y su caja se quedaban en el DOM, tapando
+         la app aunque se cerrara el nuevo— (Quire, 2F). El velo NO se va: lo
+         hereda el nuevo. Con uno saliendo y otro entrando se apilaban dos
+         capas a .62 y la pantalla se oscurecía de golpe (medido: hasta .79)
+         en el medio del cambio; el mismo velo queda quieto. Y si el de antes
+         ya se había cerrado (close y show seguidos) y su velo todavía se iba,
+         ese velo vuelve: el mismo oscurecimiento salía por ahí. */
+      const heredado = open?.scrim || null;
+      if (open) cerrar(null, true);
+      const revivido = heredado ? null : veloSaliendo();
+      const scrim = heredado || revivido || document.createElement('div');
+      if (!revivido) scrim.className = 'ox-scrim';
 
+      // Dos cajas que se reemplazan hacen un relevo, no se cruzan en el
+      // centro (motion-timing, regla 2).
       const anim = document.createElement('div');
-      anim.className = 'ox-modal__anim';
+      anim.className = `ox-modal__anim${cajaSaliendo() ? ' is-after' : ''}`;
 
       const modal = document.createElement('div');
       modal.className = 'ox-modal';
@@ -376,44 +519,63 @@ const Modal = (() => {
       else bodyEl.innerHTML = body;
 
       const foot = modal.querySelector('.ox-modal__foot');
-      actions.forEach((a) => {
+      const botones = actions.map((a) => {
         const b = document.createElement('button');
         b.className = `ox-btn ox-flashable ox-btn--${a.variant || 'ghost'}`;
         b.textContent = a.label;
-        b.addEventListener('click', () => close(a.value));
+        // Atado a SU modal: aunque la caja se vuelva inerte al irse, un
+        // click que ya venía en camino no le contesta al que la pisó.
+        b.addEventListener('click', () => { if (open?.anim === anim) close(a.value); });
         foot.appendChild(b);
-        if (a.autofocus) setTimeout(() => b.focus(), 60);
+        return { a, b };
       });
 
-      modal.querySelector('[data-dismiss]')?.addEventListener('click', () => close(null));
-      if (dismissible) scrim.addEventListener('click', () => close(null));
+      modal.querySelector('[data-dismiss]')?.addEventListener('click', () => { if (open?.anim === anim) close(null); });
+      // En propiedad y no con addEventListener: un velo heredado traería el
+      // oyente del modal de antes, y cerraría uno que no se deja descartar.
+      scrim.onclick = dismissible ? () => close(null) : null;
 
       anim.appendChild(modal);
-      layer().append(scrim, anim);
+      // El heredado (o el revivido) ya está en la capa: moverlo le
+      // reiniciaría la animación. La caja nueva va encima de todo.
+      if (heredado || revivido) layer().append(anim);
+      else layer().append(scrim, anim);
       Icons.mount(modal);
       scrollFade(bodyEl);
 
-      open = { scrim, anim, resolve, restore: document.activeElement };
+      open = { scrim, anim, resolve, restore: document.activeElement, botones };
       document.addEventListener('keydown', onKey, true);
-      if (!actions.some((a) => a.autofocus)) {
-        setTimeout(() => anim.querySelector('button,input,textarea')?.focus(), 60);
-      }
+      anim.addEventListener('keydown', alEnter);
+      setTimeout(() => {
+        if (open?.anim !== anim) return;          // ya se cerró
+        const el = botones.find(({ a }) => a.autofocus)?.b || focoInicial(bodyEl, foot, botones);
+        el?.focus();
+        // Un campo que ya trae un valor (renombrar) queda seleccionado: se
+        // escribe encima, como en cualquier diálogo de escritorio.
+        if (el?.tagName === 'INPUT' && UN_RENGLON.has(el.type)) el.select();
+      }, 60);
     });
   }
 
-  /** Confirmación destructiva: el rojo aparece acá porque algo se va a romper. */
+  /** Confirmación destructiva: el rojo aparece acá porque algo se va a romper.
+      Con `danger` el foco arranca en Cancelar: con él en el botón rojo, un
+      Enter por reflejo borraba lo que no se recupera (Quire, «¿Borrar toda la
+      tinta?», ux-09). */
   function confirm({ title, sub, confirmLabel = 'Confirmar', danger = false } = {}) {
     return show({
       title,
       sub,
       actions: [
-        { label: 'Cancelar', value: false },
-        { label: confirmLabel, value: true, variant: danger ? 'danger-solid' : 'primary', autofocus: true },
+        { label: 'Cancelar', value: false, autofocus: danger },
+        { label: confirmLabel, value: true, variant: danger ? 'danger-solid' : 'primary', autofocus: !danger },
       ],
     }).then((v) => v === true);
   }
 
-  return { show, confirm, close };
+  /* isOpen: para que los atajos de una vista no actúen detrás del velo (en
+     Quire, Ctrl+Z y Espacio llegaban al documento de atrás). Mientras sale ya
+     cuenta como cerrado. */
+  return { show, confirm, close, get isOpen() { return !!open; } };
 })();
 
 export { Tooltip, Toast, Menu, Modal };

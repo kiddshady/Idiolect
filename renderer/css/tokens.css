@@ -63,8 +63,8 @@
   --ox-bg:     oklch(14.9% calc(.0046 * var(--ox-tint)) var(--ox-hue));  /* base de la ventana */
   --ox-s1:     oklch(17.2% calc(.0070 * var(--ox-tint)) var(--ox-hue));  /* rail, statusbar */
   --ox-s2:     oklch(20.3% calc(.0093 * var(--ox-tint)) var(--ox-hue));  /* card, panel, fila elevada */
-  --ox-s3:     oklch(23.4% calc(.0106 * var(--ox-tint)) var(--ox-hue));  /* menú, modal, popover, tooltip */
-  --ox-s4:     oklch(27.1% calc(.0126 * var(--ox-tint)) var(--ox-hue));  /* lo más alto: lo que flota sobre todo */
+  --ox-s3:     oklch(23.4% calc(.0106 * var(--ox-tint)) var(--ox-hue));  /* menú, modal, popover */
+  --ox-s4:     oklch(27.1% calc(.0126 * var(--ox-tint)) var(--ox-hue));  /* tooltip, lo más alto: lo que flota sobre todo */
 
   /* El backgroundColor de la BrowserWindow tiene que coincidir con --ox-bg.
      Electron no entiende oklch, así que main.cjs lleva el hex equivalente y el
@@ -95,6 +95,14 @@
   --ox-wash-3:     rgb(var(--ox-accent-rgb) / .15);   /* activo / presionado */
   --ox-ring:       rgb(var(--ox-accent-rgb) / .55);   /* focus del teclado */
   --ox-select:     rgb(var(--ox-accent-rgb) / .16);   /* ::selection */
+  /* La selección sobre una superficie CLARA dentro de la app (una hoja de
+     PDF, una vista previa): el mismo gesto invertido. Sobre el fondo oscuro
+     seleccionar aclara (el acento tendido, que en la paleta luz es blanco);
+     sobre papel blanco eso no se ve —deja el papel en 253 de 255, 1,02:1—,
+     así que oscurece: el fondo de la app al mismo 16 %. Con color-mix y no
+     con los números de --ox-bg, así sigue a la paleta. Lo usa .ox-sobre-claro
+     (base.css). Nació en el lector de Quire. */
+  --ox-select-claro: color-mix(in oklab, var(--ox-bg) 16%, transparent);
 
   /* Con un acento oscuro o muy saturado, la tinta encima tiene que ser clara.
      Descomentá esto si tu acento no es luz:

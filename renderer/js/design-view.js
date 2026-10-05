@@ -10,8 +10,8 @@
 
 import { Icons } from './icons.js';
 import { Toast, Menu, Modal } from './overlays.js';
-import { bindSwitcher, bindStepper } from './motion.js';
-import { mark, status, copy, colorToken, path } from './ui.js';
+import { bindSwitcher, bindStepper, swap, ocupar, contador } from './motion.js';
+import { mark, status, copy, colorToken, path, esc } from './ui.js';
 
 /* ── Las tres perillas ───────────────────────────────────────────────────────
    Los presets del acento. El nombre importa: son las cinco temperaturas que
@@ -173,6 +173,7 @@ export function designHTML() {
           <button class="ox-btn ox-btn--danger-solid ox-flashable">Borrar todo</button>
           <button class="ox-btn ox-btn--secondary" disabled>Deshabilitado</button>
           <button class="ox-iconbtn" data-tip="Botón de ícono"><i data-icon="settings"></i></button>
+          <button class="ox-iconbtn" disabled><i data-icon="trash"></i></button>
           <button class="ox-btn ox-btn--sm ox-btn--secondary">Chico</button>
           <button class="ox-btn ox-btn--lg ox-btn--secondary">Grande</button>
         </div>`)}
@@ -245,6 +246,48 @@ export function designHTML() {
           <button class="ox-btn ox-btn--secondary ox-flashable" id="demo-confirm">Confirmación destructiva</button>
           <button class="ox-btn ox-btn--secondary ox-flashable" id="demo-toast">Toast</button>
           <button class="ox-btn ox-btn--secondary ox-flashable" id="demo-toast-err">Toast de error</button>
+        </div>`)}
+
+      ${section('Reescribir un bloque', 'Un <span class="ox-mono">innerHTML</span> a secas es un corte: lo viejo se va en el mismo cuadro en que llega lo nuevo. <span class="ox-mono">swap(el, html, { relevo })</span> distingue los casos: lo que <b>aparece</b> se funde, lo que <b>se va</b> termina de irse, un estado que <b>reemplaza</b> a otro hace relevo en el mismo lugar, y un cambio de <b>valores</b> se escribe en el lugar sin volver a animar. Tocá los estados en cualquier orden, rápido también.', `
+        <div class="ox-row" style="gap:8px;margin-bottom:12px;flex-wrap:wrap" id="demo-swap-btns">
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" data-swap="pista">Pista</button>
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" data-swap="cargando">Cargando</button>
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" data-swap="resultado">Resultado</button>
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" data-swap="vacio">Vaciar</button>
+        </div>
+        <div class="ox-card" style="max-width:420px">
+          <div class="ox-card__body">
+            <div id="demo-swap" style="display:flex;align-items:center;gap:10px;min-height:40px"></div>
+          </div>
+        </div>`)}
+
+      ${section('Ocupado y contadores', 'Dos piezas para lo que cambia con la app andando, armadas sobre <span class="ox-mono">swap()</span>. <span class="ox-mono">ocupar(btn, ocupado, html)</span>: un botón que hace un trabajo pasa a «ocupado» con un relevo en el lugar, y su ancho viaja en vez de saltar — al achicarse espera a que el rótulo que se va casi no se vea, así la caja no lo corta. El vecino acompaña. <span class="ox-mono">contador(el, n)</span>: un contador que solo se ve cuando hay algo; aparece y se va fundiéndose, y cuando cambia se escribe en su lugar con un destello.', `
+        <div class="ox-row" style="gap:8px;margin-bottom:16px;align-items:center">
+          <button class="ox-btn ox-btn--primary ox-flashable" id="demo-ocupar" data-ocupado="0">${Icons.svg('download')} Exportar</button>
+          <span class="ox-meta" id="demo-ocupar-vecino">el vecino acompaña</span>
+        </div>
+        <div class="ox-row" style="gap:8px;align-items:center">
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" id="demo-contar-mas">Sumar</button>
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" id="demo-contar-vaciar">Vaciar</button>
+          <div class="ox-navitem" style="width:200px;pointer-events:none">${Icons.svg('grid')} Páginas <span class="ox-navitem__count" id="demo-contador"></span></div>
+        </div>`)}
+
+      ${section('Mostrar y esconder', 'Lo que se prende con <span class="ox-mono">el.hidden</span> no aparece de golpe: con <span class="ox-mono">.ox-plegable</span> el alto se pliega mientras se desvanece, y lo de abajo se corre de a poco en vez de saltar. <span class="ox-mono">.ox-plegable--ancho</span> hace lo mismo en una fila, con los de al lado. El JS no cambia: sigue siendo <span class="ox-mono">hidden</span>. Si manejás una clase y tenés un envoltorio, <span class="ox-mono">.ox-reveal</span>.', `
+        <div class="ox-row" style="gap:8px;margin-bottom:12px">
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" id="demo-plegar">Opciones avanzadas</button>
+          <button class="ox-btn ox-btn--ghost ox-btn--sm" id="demo-plegar-ancho">Dato del medio</button>
+        </div>
+        <div class="ox-card" style="max-width:420px">
+          <div class="ox-card__body">
+            <div class="ox-plegable" id="demo-plegable" hidden>
+              <div class="ox-meta" style="padding-bottom:12px">Lo que estaba escondido. Todo lo de abajo se corre con él.</div>
+            </div>
+            <div class="ox-row" id="demo-plegable-fila" style="gap:8px;--ox-plegable-gap:8px">
+              <span class="ox-chip">primero</span>
+              <span class="ox-chip ox-plegable--ancho" id="demo-plegable-ancho">el del medio</span>
+              <span class="ox-chip">último</span>
+            </div>
+          </div>
         </div>`)}
 
       ${section('Métricas y medidores', '', `
@@ -405,12 +448,28 @@ export function wireDesign(rootEl) {
       .map((p) => p.replace('--ox-mono-', '')),
   )].sort() : [];
 
+  /* Los botones se arman una vez y después solo cambian de variante. Antes se
+     rehacían con innerHTML en cada click: el elegido pasaba a primario de un
+     cuadro al otro (era un nodo nuevo, sin de dónde transicionar) y el
+     destello del click se iba con el nodo viejo. La vitrina es lo que se
+     copia: tiene que mostrar el patrón bueno. */
   const pintarMono = () => {
     if (!monoHost) return;
-    const hoy = getComputedStyle(root).getPropertyValue('--ox-mono').trim();
-    monoHost.innerHTML = monoIds.map((id) => `
-      <button class="ox-btn ox-btn--${hoy.includes(`--ox-mono-${id}`) ? 'primary' : 'secondary'} ox-flashable"
-              data-mono="${id}" style="font-family:var(--ox-mono-${id})">${id}</button>`).join('');
+    if (!monoHost.children.length) {
+      monoHost.innerHTML = monoIds.map((id) => `
+        <button class="ox-btn ox-flashable" data-mono="${id}" style="font-family:var(--ox-mono-${id})">${id}</button>`).join('');
+    }
+    /* getComputedStyle RESUELVE el var() de una propiedad propia: devuelve la
+       familia, no `var(--ox-mono-roboto)`. Se compara la familia de cada
+       token con la que quedó. Antes se buscaba el nombre del token adentro
+       del valor, no aparecía nunca, y ningún botón salía elegido. */
+    const cs = getComputedStyle(root);
+    const hoy = cs.getPropertyValue('--ox-mono').trim();
+    for (const b of monoHost.querySelectorAll('[data-mono]')) {
+      const es = cs.getPropertyValue(`--ox-mono-${b.dataset.mono}`).trim() === hoy;
+      b.classList.toggle('ox-btn--primary', es);
+      b.classList.toggle('ox-btn--secondary', !es);
+    }
   };
   pintarMono();
 
@@ -468,13 +527,26 @@ export function wireDesign(rootEl) {
   const stepper = rootEl.querySelector('#demo-stepper');
   if (stepper) bindStepper(stepper);
 
+  let modelo = rootEl.querySelector('#demo-select .ox-select__value')?.textContent.trim();
   rootEl.querySelector('#demo-select')?.addEventListener('click', (e) => {
     const btn = e.currentTarget;
     const val = btn.querySelector('.ox-select__value');
-    Menu.show(btn, ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4.5', 'minimax-m3', 'qwen3.5-9b'].map((m) => ({
+    Menu.show(btn, ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4.5', 'minimax-m3', 'qwen3.5-9b'].map((m, i) => ({
       label: m,
-      selected: val.textContent === m,
-      onSelect: () => { val.textContent = m; },
+      // La aclaración atenuada: como «del sistema» en una impresora.
+      hint: i === 0 ? 'por defecto' : '',
+      selected: modelo === m,
+      /* Un valor por otro: relevo en el mismo lugar, no un textContent que
+         cambia de un cuadro al otro. Se recuerda en `modelo` porque durante
+         el relevo el textContent junta lo que se va con lo que llega. Elegir
+         el que ya estaba no hace nada: swap() recuerda recién después de su
+         primer uso (el valor de arranque lo escribió el HTML), y la primera
+         vez relevaba la misma palabra por sí misma. */
+      onSelect: () => {
+        if (m === modelo) return;
+        modelo = m;
+        swap(val, esc(m), { relevo: true });
+      },
     })));
   });
 
@@ -487,7 +559,7 @@ export function wireDesign(rootEl) {
   rootEl.querySelector('#demo-modal')?.addEventListener('click', () => {
     Modal.show({
       title: 'Nuevo elemento',
-      sub: 'El modal atrapa el foco, cierra con Escape y devuelve una promesa con el valor del botón que apretaste.',
+      sub: 'Arranca en el primer campo, Enter en un renglón aplica, atrapa el foco, cierra con Escape y devuelve una promesa con el valor del botón que apretaste.',
       body: `
         <div class="ox-col" style="gap:16px">
           <div class="ox-field">
@@ -501,7 +573,7 @@ export function wireDesign(rootEl) {
         </div>`,
       actions: [
         { label: 'Cancelar', value: null },
-        { label: 'Crear', value: true, variant: 'primary', autofocus: true },
+        { label: 'Crear', value: true, variant: 'primary' },
       ],
     }).then((v) => v && Toast.show({ title: 'Devolvió true', text: 'Esto es la vitrina: no se creó nada.', icon: 'info' }));
   });
@@ -520,6 +592,47 @@ export function wireDesign(rootEl) {
 
   rootEl.querySelector('#demo-toast-err')?.addEventListener('click', () =>
     Toast.error('No se pudo guardar', 'EPERM: el archivo está tomado por otro proceso. Se reintentó 5 veces.'));
+
+  /* swap(): los cuatro estados del bloque de demo. Vaciar no lleva relevo —se
+     va—; los otros tres se reemplazan entre sí. */
+  const SWAP = {
+    pista: '<span class="ox-meta">Escribí algo para empezar.</span>',
+    cargando: `${Icons.spinner()}<span class="ox-meta">Buscando…</span>`,
+    resultado: `${Icons.svg('check')}<span>Tres coincidencias</span><span class="ox-chip">n-0042</span>`,
+    vacio: '',
+  };
+  const swapBox = rootEl.querySelector('#demo-swap');
+  swap(swapBox, SWAP.pista);
+  rootEl.querySelector('#demo-swap-btns')?.addEventListener('click', (e) => {
+    const k = e.target.closest('[data-swap]')?.dataset.swap;
+    if (k) swap(swapBox, SWAP[k], { relevo: k !== 'vacio' });
+  });
+
+  /* ocupar(): el botón de demo trabaja 1,6 s y vuelve. El rótulo de cada
+     estado sale de acá, no de una foto del innerHTML: la foto se llevaría el
+     destello del clic que todavía está (Quire, herr-15). */
+  const ocupadoBtn = rootEl.querySelector('#demo-ocupar');
+  const ROTULO = {
+    libre: `${Icons.svg('download')} Exportar`,
+    ocupado: `${Icons.spinner()} Exportando las 12 páginas…`,
+  };
+  ocupadoBtn?.addEventListener('click', () => {
+    if (ocupadoBtn.dataset.ocupado === '1') return;
+    ocupar(ocupadoBtn, true, ROTULO.ocupado);
+    setTimeout(() => { if (ocupadoBtn.isConnected) ocupar(ocupadoBtn, false, ROTULO.libre); }, 1600);
+  });
+
+  /* contador(): nace vacío (vacío es «nada que contar»). */
+  let cuenta = 0;
+  const cont = rootEl.querySelector('#demo-contador');
+  rootEl.querySelector('#demo-contar-mas')?.addEventListener('click', () => contador(cont, ++cuenta));
+  rootEl.querySelector('#demo-contar-vaciar')?.addEventListener('click', () => { cuenta = 0; contador(cont, 0); });
+
+  /* Mostrar y esconder: el JS solo cambia `hidden`, el CSS pliega. */
+  const plegable = rootEl.querySelector('#demo-plegable');
+  rootEl.querySelector('#demo-plegar')?.addEventListener('click', () => { plegable.hidden = !plegable.hidden; });
+  const ancho = rootEl.querySelector('#demo-plegable-ancho');
+  rootEl.querySelector('#demo-plegar-ancho')?.addEventListener('click', () => { ancho.hidden = !ancho.hidden; });
 
   /* Íconos: click = copiar la etiqueta lista para pegar. */
   rootEl.querySelector('#icon-grid')?.addEventListener('click', (e) => {

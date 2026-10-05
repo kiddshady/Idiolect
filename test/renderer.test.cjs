@@ -62,7 +62,7 @@ app.whenReady().then(async () => {
   const js = (c) => win.webContents.executeJavaScript(c);
   const click = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)});
     if (!el) return false; el.click(); return true; })()`);
-  const filas = () => js(`[...document.querySelectorAll('.id-fila:not([data-state="closing"]) .ox-listitem__title')].map(e => e.textContent)`);
+  const filas = () => js(`[...document.querySelectorAll('#lista > .ox-list > .id-row:not([data-state="closing"]) .ox-listitem__title')].map(e => e.textContent)`);
   const cambiar = (sel, valor) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)});
     if (!el) return false; el.value = ${JSON.stringify(valor)}; el.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
   /** Dónde cae el modal: tiene que estar entero dentro de la ventana. */
@@ -90,7 +90,8 @@ app.whenReady().then(async () => {
     md().split('\n').find((l) => l.includes('cátedra')));
   ok('sale de Por revisar', (await filas()).length === 0);
   ok('el editor la sigue mostrando', await js(`document.getElementById('c-expresion')?.value === 'la cátedra'`));
-  ok('el contador baja a 0', await js(`document.getElementById('count-revisar').textContent === '0'`));
+  await sleep(400);
+  ok('sin nada que revisar, el contador se va', await js(`document.getElementById('count-revisar').textContent.trim() === ''`));
 
   console.log('\n3. Crear por la UI: modal → disco → glosario.md');
   await click('.ox-navitem[data-view="glosario"]');
@@ -288,7 +289,13 @@ app.whenReady().then(async () => {
   await sleep(500);
   const relevo = await js(`(async () => {
     const panel = (k) => document.querySelector('#editor > .id-editor__panel[data-clave="' + k + '"]');
-    const op = (el) => el?.isConnected ? Math.round(+getComputedStyle(el).opacity * 100) : null;
+    // La opacidad que se VE: el panel viejo se esfuma adentro del calco de swap().
+    const op = (el) => {
+      if (!el?.isConnected) return null;
+      let o = 1;
+      for (let n = el; n && n.id !== 'editor'; n = n.parentElement) o *= +getComputedStyle(n).opacity;
+      return Math.round(o * 100);
+    };
     const viejo = panel(${JSON.stringify(idA)});
     const rv = viejo.getBoundingClientRect();
     document.querySelector('.id-row[data-entrada="${idB}"]').click();
@@ -313,28 +320,33 @@ app.whenReady().then(async () => {
 
   const cierre = await js(`(async () => {
     const b = document.getElementById('buscar');
-    const antes = document.querySelectorAll('.id-fila').length;
+    const vivas = () => document.querySelectorAll('#lista > .ox-list > .id-row:not([data-state="closing"])');
+    const antes = vivas().length;
+    const queda = [...vivas()].find((r) => r.textContent.includes('holis'));
     b.value = 'holis'; b.dispatchEvent(new Event('input'));
-    const altos = [];
+    const salen = [...document.querySelectorAll('#lista > .ox-list > .id-row[data-state="closing"]')];
+    const ops = []; const tops = [];
     for (let t = 0; t <= 320; t += 40) {
-      const f = document.querySelector('.id-fila[data-state="closing"]');
-      altos.push(f ? Math.round(f.getBoundingClientRect().height) : null);
+      ops.push(salen.map((f) => f.isConnected ? Math.round(+getComputedStyle(f).opacity * 100) : null));
+      tops.push(Math.round(queda.getBoundingClientRect().top));
       await new Promise((r) => setTimeout(r, 40));
     }
-    const quedan = document.querySelectorAll('.id-fila').length;
+    const quedan = document.querySelectorAll('#lista > .ox-list > .id-row').length;
     b.value = ''; b.dispatchEvent(new Event('input'));
     await new Promise((r) => setTimeout(r, 50));
-    const entrando = [...document.querySelectorAll('.id-fila.is-entering')];
-    const aMedias = entrando.map((f) => Math.round(f.getBoundingClientRect().height));
-    await new Promise((r) => setTimeout(r, 400));
-    const enteras = entrando.map((f) => Math.round(f.getBoundingClientRect().height));
-    return { antes, altos, quedan, aMedias, enteras };
+    const nuevas = [...vivas()].filter((r) => r !== queda);
+    const aMedias = nuevas.map((f) => Math.round(+getComputedStyle(f).opacity * 100));
+    await new Promise((r) => setTimeout(r, 450));
+    const enteras = nuevas.map((f) => Math.round(+getComputedStyle(f).opacity * 100));
+    return { antes, salen: salen.length, ops, tops, quedan, aMedias, enteras };
   })()`);
-  const alt = cierre.altos.filter((h) => h !== null);
-  ok('una fila filtrada se cierra de a poco', alt.length >= 2 && alt.every((h, i) => !i || h <= alt[i - 1]) && alt.some((h) => h > 0 && h < alt[0]), JSON.stringify(cierre));
+  const primeraSale = cierre.ops.map((o) => o[0]).filter((o) => o !== null);
+  ok('una fila filtrada se esfuma de a poco', cierre.salen === cierre.antes - 1 && primeraSale.some((o) => o > 5 && o < 95), JSON.stringify(cierre));
   ok('y al terminar sale del DOM', cierre.quedan === 1, JSON.stringify(cierre));
-  ok('al soltar la búsqueda, las que vuelven se abren (no aparecen de golpe)',
-    cierre.aMedias.length === cierre.antes - 1 && cierre.aMedias.every((h, i) => h < cierre.enteras[i]), JSON.stringify(cierre));
+  ok('la que queda viaja a su lugar (no salta)', cierre.tops.at(-1) < cierre.tops[0]
+    && cierre.tops.some((t) => t < cierre.tops[0] && t > cierre.tops.at(-1)), JSON.stringify(cierre.tops));
+  ok('al soltar la búsqueda, las que vuelven entran (no aparecen de golpe)',
+    cierre.aMedias.length === cierre.antes - 1 && cierre.aMedias.every((o, i) => o < cierre.enteras[i] && cierre.enteras[i] === 100), JSON.stringify(cierre));
 
   await click(`.id-row[data-entrada="${idA}"]`);
   await sleep(500);
@@ -344,7 +356,10 @@ app.whenReady().then(async () => {
     document.getElementById('confirmada').click();
     const ops = [];
     for (let t = 0; t <= 400; t += 40) {
-      ops.push(Math.round(+getComputedStyle(document.getElementById('nota-confirmada')).opacity * 100));
+      // La nota nueva asoma adentro del mismo nodo mientras la vieja se va en un calco.
+      const n = document.getElementById('nota-confirmada');
+      const vivo = n?.querySelector(':scope > :not(.ox-swap-out)') || n;
+      ops.push(Math.round(+getComputedStyle(vivo).opacity * 100));
       await new Promise((r) => setTimeout(r, 40));
     }
     return { ops };
