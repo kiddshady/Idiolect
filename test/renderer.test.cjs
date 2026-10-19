@@ -402,6 +402,30 @@ app.whenReady().then(async () => {
   ok('el botón de Ajustes queda ocupado mientras busca', botonUpd.durante, JSON.stringify(botonUpd));
   ok('y vuelve a estar libre al terminar', botonUpd.despues, JSON.stringify(botonUpd));
 
+  /* ── 11-bis. El avance de la descarga corre sin titilar ───────────────────
+     El % y los bytes van del que se ve al nuevo (roll), sin destello ni relevo. */
+  console.log('\n11-bis. El avance de la descarga');
+  const manda = (pct, tr) => win.webContents.send('update:cambio',
+    { fase: 'descargando', version: '9.9.9', actual: '0.0.1', progreso: { pct, transferido: tr, total: 10e6, bps: 0 } });
+  manda(0.1, 1e6);
+  await sleep(500);
+  manda(0.6, 6e6);
+  const pasos = [];
+  for (let i = 0; i < 8; i++) {
+    await sleep(30);
+    pasos.push(await js(`parseInt([...document.querySelectorAll('#ox-layer [data-avance]')].pop()?.textContent, 10)`));
+  }
+  manda(0.8, 8e6);
+  await sleep(700);
+  const avance = await js(`(() => {
+    const av = [...document.querySelectorAll('#ox-layer [data-avance]')];
+    const t = av.pop()?.closest('.ox-toast__text');
+    return { toasts: av.length + 1, dice: t?.textContent.trim(), destello: !!t?.querySelector('.ox-ticked') || !!t?.classList.contains('ox-ticked'), calco: !!t?.querySelector('.ox-swap-out') };
+  })()`);
+  ok('el % corre de a poco (pasa por el medio)', pasos.some((v) => v > 10 && v < 60), JSON.stringify(pasos));
+  ok('y llega al último en un solo toast, sin destello ni relevo',
+    avance.toasts === 1 && /^80 % · /.test(avance.dice || '') && !avance.destello && !avance.calco, JSON.stringify(avance));
+
   // El vigía de la carpeta la tiene tomada hasta que la app sale: si no se
   // deja borrar, queda en %TEMP% y no pasa nada.
   try { fs.rmSync(DIR, { recursive: true, force: true, maxRetries: 5 }); } catch { /* queda en %TEMP% */ }

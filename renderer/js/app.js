@@ -12,7 +12,7 @@
 import { Icons } from './icons.js';
 import { Tooltip, Toast, Modal } from './overlays.js';
 import Router from './router.js';
-import { initClickFlash, initScrollFades, raf2, toggleReveal, swap, frase, numero, contador, reconcile, deslizarAncho, ocupar } from './motion.js';
+import { initClickFlash, initScrollFades, raf2, toggleReveal, swap, frase, numero, contador, reconcile, deslizarAncho, ocupar, roll } from './motion.js';
 import { esc, paint, head, empty, mark, attempt, copy, colorToken, path } from './ui.js';
 import { relTime, plural, fmtBytes } from './format.js';
 
@@ -574,13 +574,21 @@ function alCambiarUpdate(e) {
       }
       break;
     case 'descargando': {
-      const pct = Math.round(e.progreso.pct * 100);
-      const texto = e.progreso.total
-        ? `${pct} % · ${fmtBytes(e.progreso.transferido)} de ${fmtBytes(e.progreso.total)}`
-        : `${fmtBytes(e.progreso.transferido)}…`;
+      const { total } = e.progreso;
       if (!updToast) updToast = Toast.show({ title: `Descargando Idiolect ${e.version}`, text: ' ', icon: 'download', duration: 0 });
-      // Cambia muy seguido: se reescribe en el lugar, sin relevo ni destello.
-      swap(updToast.el?.querySelector('.ox-toast__text'), esc(texto));
+      /* El avance corre en su lugar con roll(), sin relevo ni destello: el %
+         y los bytes van del que se ve al nuevo en vez de saltar en cada aviso.
+         El renglón entra una vez (swap) y después solo cambia su texto. */
+      const txt = updToast.el?.querySelector('.ox-toast__text');
+      if (txt && !txt.querySelector('[data-avance]')) swap(txt, '<span data-avance></span>');
+      const av = txt?.querySelector('[data-avance]');
+      if (av) {
+        roll(av, { pct: e.progreso.pct * 100, tr: e.progreso.transferido }, (v) => {
+          av.textContent = total
+            ? `${Math.round(v.pct)} % · ${fmtBytes(v.tr)} de ${fmtBytes(total)}`
+            : `${fmtBytes(v.tr)}…`;
+        });
+      }
       break;
     }
     case 'listo':
